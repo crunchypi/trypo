@@ -83,3 +83,88 @@ func (c *Centroid) DrainOrdered(n int) []DataPoint {
 	}
 	return res
 }
+
+func (c *Centroid) ExpireDataPoints() {
+	// Odd looping because it's not known how many DataPoints are expired,
+	// and so avoding an indes increment is helpful.
+	i := 0
+	for {
+		if i >= len(c.DataPoints) {
+			break
+		}
+		if c.DataPoints[i].Expired() {
+			// Should be re-sliced with O(1). Needs confirmation, though.
+			c.DataPoints = append(c.DataPoints[:i], c.DataPoints[i+1:]...)
+			continue
+		}
+		i++
+	}
+}
+
+func (c *Centroid) LenDP() int { return len(c.DataPoints) }
+
+func (c *Centroid) MemTrim() {
+	// @ Currently inefficient since memory is essentially doubled
+	// @ while doing this procedure.
+	dp := make([]DataPoint, 0, len(c.DataPoints))
+	for i := 0; i < len(c.DataPoints); i++ {
+		if !c.DataPoints[i].Expired() {
+			dp = append(dp, c.DataPoints[i])
+		}
+	}
+	c.DataPoints = dp
+}
+
+func (c *Centroid) MoveVector() bool {
+	vec, ok := mathutils.VecMean(c.datapointVecGenerator())
+	if ok {
+		c.vec = vec
+	}
+	return ok
+}
+
+func (c *Centroid) DistributeDataPoints(n int, receivers []interface {
+	VecContainer
+	DataPointAdder
+}) {
+	// Need to have a slice here (i.e can't draw datapoints directly from
+	// c.DataPoints) because this instance (c) can be one of the distributers.
+	dp := c.DrainOrdered(n)
+	i := 0
+	generator := func() ([]float64, bool) {
+		if i >= len(receivers) {
+			return nil, false
+		}
+		i++
+		return receivers[i-1].Vec(), true
+	}
+
+	for j := 0; j < len(dp); j++ {
+		i = 0 // Reset generator.
+		indexes := searchutils.KNNEuc(dp[j].Vec, generator, 1)
+		// Search failed, put back into self.
+		if len(indexes) == 0 {
+			c.AddDataPoint(dp[j])
+			continue
+		}
+		if err := receivers[indexes[0]].AddDataPoint(dp[j]); err != nil {
+			// Adder failed, put back into self.
+			c.AddDataPoint(dp[j])
+		}
+	}
+}
+
+func (c *Centroid) KNNDataPointLookupCos(vec []float64, k int, drain bool) []DataPoint {
+	res := make([]DataPoint, 0, k)
+
+	indexes := searchutils.KNNCos(vec, c.datapointVecGenerator(), k)
+	for _, i := range indexes {
+		res = append(res, c.DataPoints[i])
+	}
+	if drain {
+		for _, i := range indexes {
+			c.DataPoints = append(c.DataPoints[:i], c.DataPoints[i+1:]...)
+		}
+	}
+	return res
+}
