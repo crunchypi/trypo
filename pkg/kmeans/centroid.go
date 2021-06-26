@@ -2,6 +2,7 @@ package kmeans
 
 import (
 	"errors"
+	"trypo/pkg/mathutils"
 	"trypo/pkg/searchutils"
 )
 
