@@ -2,6 +2,7 @@ package kmeans
 
 import (
 	"errors"
+	"trypo/pkg/mathutils"
 	"trypo/pkg/searchutils"
 )
 
@@ -142,4 +143,57 @@ func (km *KMeans) AddDataPoint(dp DataPoint) error {
 	}
 
 	return addErr
+}
+
+func (km *KMeans) DrainUnordered(n int) []DataPoint {
+	res := make([]DataPoint, 0, n)
+	for centroidIndex, portion := range km.centroidDataPointPortions(n) {
+		res = append(res, km.Centroids[centroidIndex].DrainUnordered(portion)...)
+	}
+	return res
+}
+
+func (km *KMeans) DrainOrdered(n int) []DataPoint {
+	res := make([]DataPoint, 0, n)
+	for centroidIndex, portion := range km.centroidDataPointPortions(n) {
+		res = append(res, km.Centroids[centroidIndex].DrainOrdered(portion)...)
+	}
+	return res
+}
+
+func (km *KMeans) ExpireDataPoints() {
+	for _, centroid := range km.Centroids {
+		centroid.ExpireDataPoints()
+	}
+}
+
+func (km *KMeans) LenDP() int {
+	res := 0
+	for _, centroid := range km.Centroids {
+		res += centroid.LenDP()
+	}
+	return res
+}
+
+func (km *KMeans) MemTrim() {
+	centroids := newCentroidSlice(0, len(km.Centroids))
+	for _, centroid := range km.Centroids {
+		centroid.MemTrim()
+		if centroid.LenDP() != 0 {
+			centroids = append(centroids, centroid)
+		}
+	}
+	km.Centroids = centroids
+}
+
+func (km *KMeans) MoveVector() bool {
+	for _, centroid := range km.Centroids {
+		centroid.MoveVector()
+	}
+
+	vec, ok := mathutils.VecMean(km.centroidVecGenerator())
+	if ok {
+		km.vec = vec
+	}
+	return ok
 }
