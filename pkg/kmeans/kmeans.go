@@ -197,3 +197,35 @@ func (km *KMeans) MoveVector() bool {
 	}
 	return ok
 }
+
+func (km *KMeans) Split(centroidDPThreshold int) {
+	// @ This needs a rethink.
+	newCentroids := newCentroidSlice(0, 10)
+
+	for i, centroid := range km.Centroids {
+		if centroid.LenDP() >= centroidDPThreshold {
+			trim := centroid.LenDP() / 2
+			newCentroids = append(newCentroids, km.splitCentroid(i, trim))
+		}
+	}
+	km.Centroids = append(km.Centroids, newCentroids...)
+}
+
+func (km *KMeans) DistributeDataPoints(n int, receivers []interface {
+	VecContainer
+	DataPointAdder
+}) {
+	// use km.Centroids if recievers is not set.
+	if receivers == nil {
+		receivers = make([]interface {
+			VecContainer
+			DataPointAdder
+		}, len(km.Centroids))
+		for i, centroid := range km.Centroids {
+			receivers[i] = centroid
+		}
+	}
+	for centroidIndex, portion := range km.centroidDataPointPortions(n) {
+		km.Centroids[centroidIndex].DistributeDataPoints(portion, receivers)
+	}
+}

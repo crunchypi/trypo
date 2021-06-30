@@ -212,3 +212,117 @@ func TestKMMoveVector(t *testing.T) {
 		t.Fatal("incorrect vec in km:", km.Vec())
 	}
 }
+
+func TestKMSplit(t *testing.T) {
+	dps := []DataPoint{
+		{Vec: []float64{1}},
+		{Vec: []float64{1}},
+		{Vec: []float64{1}},
+		{Vec: []float64{1}},
+	}
+	km := KMeans{CentroidDPThreshold: 10}
+	for _, dp := range dps {
+		km.AddDataPoint(dp)
+	}
+	km.Split(2)
+	if len(km.Centroids) != 2 {
+		t.Fatal("incorrect centroid count after split")
+	}
+
+	l1 := km.Centroids[0].LenDP()
+	l2 := km.Centroids[1].LenDP()
+	if l1 != 2 || l2 != 2 {
+		t.Fatal("uneven datapoint distribution after split:", l1, l2)
+	}
+}
+
+func TestKMDistributeDataPoints(t *testing.T) {
+	/*
+		KMeans.DistributeDataPoints handles both nil and non-nil arguments very
+		differently, so this test will be in 2 phases, one for each case.
+
+	*/
+
+	setup := func() (*Centroid, *Centroid) {
+		/*
+			The centroid and datapoint setup below is set up such that
+			dp2 is in c1 but is actually closer to c2. Likewise, dp3
+			is in c2 but is closer to c1.
+		*/
+		c1 := NewCentroidFromVec([]float64{1})
+		c2 := NewCentroidFromVec([]float64{5})
+
+		dp1 := DataPoint{Vec: []float64{2}} // closest to c1.vec
+		dp2 := DataPoint{Vec: []float64{6}} // closest to c2.vec
+		for _, dp := range []DataPoint{dp1, dp2} {
+			c1.AddDataPoint(dp)
+		}
+
+		dp3 := DataPoint{Vec: []float64{2}} // closest to c1.vec
+		dp4 := DataPoint{Vec: []float64{6}} // closest to c2.vec
+		for _, dp := range []DataPoint{dp3, dp4} {
+			c2.AddDataPoint(dp)
+		}
+		return c1, c2
+	}
+
+	test := func(no int, c1, c2 *Centroid) {
+		/*
+			Confirms that the c1 has dp1 and dp3, while c2 has
+			dp2 and dp4, as set up in the setup func above.
+		*/
+		c1dps := c1.DataPoints // Convenience
+		c2dps := c2.DataPoints // Convenience
+
+		if len(c1dps) != 2 {
+			t.Fatalf("(case %d) incorrect dp amount in c1: %v\n", no, len(c1dps))
+		}
+		if len(c2dps) != 2 {
+			t.Fatalf("(case %d) incorrect dp amount in c1: %v\n", no, len(c2dps))
+		}
+		if c1dps[0].Vec[0] != 2 || c1dps[1].Vec[0] != 2 {
+			t.Fatalf("(case %d) incorrect dp placement in c1: %v\n", no, c1dps)
+		}
+		if c2dps[0].Vec[0] != 6 || c2dps[1].Vec[0] != 6 {
+			t.Fatalf("(case %d) incorrect dp placement in c1: %v\n", no, c2dps)
+		}
+
+	}
+
+	// First case: nil (will distribute DPs between contained Centroids)
+	c1, c2 := setup()
+	km := KMeans{Centroids: newCentroidSlice(2, 2)}
+	for i, c := range []*Centroid{c1, c2} {
+		km.Centroids[i] = c
+	}
+
+	km.DistributeDataPoints(2, nil)
+	test(1, km.Centroids[0].(*Centroid), km.Centroids[1].(*Centroid))
+
+	/*
+		 Second case: one of the centroids are 'external' (i.e not in Kmeans).
+		 This has to be done twice: (1) c1 is internal in km while c2 is external,
+		 and vice versa.
+		c1, c2 = setup()
+	*/
+	km = KMeans{Centroids: newCentroidSlice(1, 1)}
+	km.Centroids[0] = c1
+
+	km.DistributeDataPoints(1, []interface {
+		VecContainer
+		DataPointAdder
+	}{c2})
+	c1 = km.Centroids[0].(*Centroid) // Save the internal, this should have 3 datapoints now.
+
+	km = KMeans{Centroids: newCentroidSlice(1, 1)}
+	km.Centroids[0] = c2
+
+	km.DistributeDataPoints(1, []interface {
+		VecContainer
+		DataPointAdder
+	}{c1})
+
+	c2 = km.Centroids[0].(*Centroid) // Save again for easier access in the test(...) call.
+	// Both c1 and c2 should now have 2 datapoints each.
+	test(2, c1, c2)
+}
