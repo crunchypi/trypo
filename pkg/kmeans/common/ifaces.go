@@ -12,49 +12,48 @@ methods from outside, however, required the specific interfaces in the kmeans
 pkg, i.e implicit but _not_ between packages in this case. Example:
 
 "
-kmeansns.Centroid does not implement CentroidComposite (wrong type for
-AddPayload method)
-have	AddPayload(kmeans.PayloadContainer) error
-want	AddPayload(PayloadContainer) error
+kmeansns.Centroid does not implement Centroid (wrong type for
+AddDataPoint method)
+have	AddDataPoint(kmeans.DataPoint) error
+want	AddDataPoint(DataPoint) error
 "
 
 -------------------------------------------------------------------------------
 What:
 
-A few interfaces that can are layered and are meant to be descriptive of:
-- 'Payloads', or the smallest type of data (holding []byte data, etc).
-- 'Centroid', in a kmeans context. Keeps payloads.
-
+A few interfaces descriptive of elements useful for kmeans, specifically;
+- DataPoint
+- Centroid
+- CentroidManager
 
 */
 package common
 
-// VecContainer is whatever contains a vector.
 type VecContainer interface {
 	Vec() []float64
 }
 
-// PayloadContainer is whatever keeps payloads.
-type PayloadContainer interface {
+// DataPoint is a container of a vec, some payload and an expiration time.
+type DataPoint interface {
 	VecContainer
 	Payload() []byte
 	Expired() bool
 }
 
-// PayloadReceiver receives payloads.
-type PayloadReceiver interface {
+// DataPointReceiver receives DataPoints.
+type DataPointReceiver interface {
 	VecContainer
-	AddPayload(pc PayloadContainer) bool
+	AddDataPoint(dp DataPoint) bool
 }
 
-// PayloadDrainer drains itself of- and returns payloads.
-type PayloadDrainer interface {
-	DrainUnordered(n int) []PayloadContainer
-	DrainOrdered(n int) []PayloadContainer
+// DataPointDrainer drains itself of- and returns payloads.
+type DataPointDrainer interface {
+	DrainUnordered(n int) []DataPoint
+	DrainOrdered(n int) []DataPoint
 }
 
-// PayloadExpirer expires as drops payloads.
-type PayloadExpirer interface {
+// DataPointExpirer expires and drops datapoints.
+type DataPointExpirer interface {
 	Expire()
 }
 
@@ -70,25 +69,25 @@ type VecMover interface {
 	MoveVector() bool
 }
 
-// PayloadDistributer drains itself of- and distributes payloads to receivers.
-type PayloadDistributer interface {
-	DistributePayload(n int, receivers []PayloadReceiver)
+// DataPointDistributer drains itself of- and distributes datapoints to receivers.
+type DataPointDistributer interface {
+	DistributeDataPoints(n int, receivers []DataPointReceiver)
 }
 
 // KNNSearcher does a KNN payload lookup using vectors.
 type KNNSearcher interface {
-	KNNLookup(vec []float64, k int, drain bool) []PayloadContainer
+	KNNLookup(vec []float64, k int, drain bool) []DataPoint
 }
 
-// Centroid is a composite interface which is intended to keep/manage payloads
-// as a centroid in the context of this repo. It breaks the naming convention
+// Centroid is a composite interface which is intended to keep/manage datapoints
+// as a centroid in the context of this pkg. It breaks the naming convention
 // for clarity reasons.
 type Centroid interface {
-	PayloadReceiver
-	PayloadDrainer
-	PayloadExpirer
+	DataPointReceiver
+	DataPointDrainer
+	DataPointExpirer
 	MemTrimmer
 	VecMover
-	PayloadDistributer
+	DataPointDistributer
 	KNNSearcher
 }
