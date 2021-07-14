@@ -5,6 +5,7 @@ The centroid impl here follows the common.Centroid interface.
 package centroid
 
 import (
+	"sort"
 	"trypo/pkg/kmeans/common"
 	"trypo/pkg/mathutils"
 )
@@ -133,12 +134,12 @@ func (c *Centroid) DrainOrdered(n int) []common.DataPoint {
 	res := make([]common.DataPoint, 0, n)
 	// Furthest neigh.
 	indexes := c.kfnSearchFunc(c.vec, c.dataPointVecGenerator(), n)
-	for _, i := range indexes {
-		res = append(res, c.DataPoints[i])
-	}
-	// Second loop for draining, as the vals in 'indexes' might not be ordered.
-	for _, i := range indexes {
-		c.rmDataPoint(i)
+	// Sorting because this method will remove datapoints at these indexes, and
+	// having things out of order can cause a rugpull (c.DataPoints index shift).
+	sort.Ints(indexes)
+	for i := len(indexes) - 1; i > -1; i-- { // Backwards for removal safety.
+		res = append(res, c.DataPoints[indexes[i]])
+		c.rmDataPoint(indexes[i])
 	}
 	return res
 }
