@@ -90,4 +90,5 @@ type Centroid interface {
 	VecMover
 	DataPointDistributer
 	KNNSearcher
+	LenDP() int
 }
