@@ -9,6 +9,57 @@ import (
 	"trypo/pkg/searchutils"
 )
 
+/*
+--------------------------------------------------------------------------------
+NOTE: All these tests are using a cosine similarity func while setting up new
+centroid managers (NewCentroidManagerArgs.KNNSearchFunc) AND concrete impl of
+common.Centroid (see newCentroid + newCentroidManger in this file). So using
+something else, like Euclidean distance will make all tests fail.
+
+For sanity, this is checked and enforced in the init func.
+--------------------------------------------------------------------------------
+*/
+
+var _knnSearchFunc = searchutils.KNNCos
+var _kfnSearchFunc = searchutils.KFNCos
+
+// See the note above. This init func validates the expected functionality
+// of the dependency needed for tests in this file.
+func init() {
+	msg := "See note comment block right after import, someone broke the test!"
+
+	// This init checks the correct _cosine_similarity_ functionality
+	// of _knnSearchFunc and _kfnSearchFunc.
+
+	vecs := [][]float64{
+		{1, 5},
+		{1, 8},
+	}
+
+	// Creates a generator that goes through the vecs above.
+	createGen := func() func() ([]float64, bool) {
+		i := 0
+		return func() ([]float64, bool) {
+			if i >= len(vecs) {
+				return nil, false
+			}
+			i++
+			return vecs[i-1], true
+		}
+	}
+	// []float64{1,1} is closest to vecs[0]
+	r := _knnSearchFunc([]float64{1, 1}, createGen(), 1)
+	if r[0] != 0 {
+		panic(msg)
+	}
+	// []float64{1,9} is closest to vecs[1]
+	r = _knnSearchFunc([]float64{1, 9}, createGen(), 1)
+	if r[0] != 1 {
+		panic(msg)
+	}
+
+}
+
 type datapoint struct {
 	vec           []float64
 	payload       []byte
@@ -53,8 +104,8 @@ func newCentroid(vec []float64) common.Centroid {
 	args := centroid.NewCentroidArgs{
 		InitVec:       vec,
 		InitCap:       10,
-		KNNSearchFunc: searchutils.KNNCos,
-		KFNSearchFunc: searchutils.KFNCos,
+		KNNSearchFunc: _knnSearchFunc,
+		KFNSearchFunc: _kfnSearchFunc,
 	}
 	centroid, ok := centroid.NewCentroid(args)
 	if !ok {
@@ -69,8 +120,8 @@ func newCentroidManager(vec []float64) *CentroidManager {
 		InitCap:             0,
 		CentroidFactoryFunc: newCentroid,
 		CentroidDPThreshold: 10,
-		KNNSearchFunc:       searchutils.KNNCos,
-		KFNSearchFunc:       searchutils.KFNCos,
+		KNNSearchFunc:       _knnSearchFunc,
+		KFNSearchFunc:       _kfnSearchFunc,
 	})
 	if !ok {
 		panic("couldn't setup CentroidManager for test")
@@ -283,5 +334,159 @@ func TestDrainOrdered(t *testing.T) {
 	*/
 	if dps[0].Vec()[1] != 3 && dps[1].Vec()[1] != 3 {
 		t.Fatal("didn't drain dp furthest from vec. dps:", dps)
+	}
+}
+
+func TestExpire(t *testing.T) {
+	c1 := newCentroid(vec(1))
+	c2 := newCentroid(vec(1))
+
+	c1.AddDataPoint(dp(vec(2), 1))
+	c2.AddDataPoint(dp(vec(3), 0))
+
+	cm := newCentroidManager(vec(1))
+	cm.Centroids = []common.Centroid{c1, c2}
+
+	sleep()
+	cm.Expire()
+
+	if cm.Centroids[0].LenDP() != 0 {
+		t.Fatal("centroid 1 (c1) has an outdated datapoint that was not removed")
+	}
+	if cm.Centroids[1].LenDP() != 1 {
+		t.Fatal("centroid 2 (c2) don't have an outdated datapoint but it was removed")
+	}
+}
+
+func TestLen(t *testing.T) {}
+
+func TestMemTrim(t *testing.T) {}
+
+func TestMoveVector(t *testing.T) {
+	dp1 := dp(vec(1, 1), 0)
+	dp2 := dp(vec(3, 3), 0)
+	dp3 := dp(vec(3, 3), 0)
+	dp4 := dp(vec(5, 5), 0)
+
+	c1 := newCentroid(vec(0, 0))
+	c2 := newCentroid(vec(0, 0))
+
+	for _, dp := range []common.DataPoint{dp1, dp2} {
+		c1.AddDataPoint(dp)
+	}
+	for _, dp := range []common.DataPoint{dp3, dp4} {
+		c2.AddDataPoint(dp)
+	}
+
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []common.Centroid{c1, c2}
+
+	cm.MoveVector()
+
+	// Mean of dp1&dp2 = {2,2}
+	// Mean of dp3&dp4 = {4,4}
+	// Mean of c1&c2 = {3,3}
+	if cm.Centroids[0].Vec()[0] != 2 {
+		t.Fatal("incorrect vec in c1: ", cm.Centroids[0].Vec())
+	}
+	if cm.Centroids[1].Vec()[0] != 4 {
+		t.Fatal("incorrect vec in c2: ", cm.Centroids[0].Vec())
+	}
+	if cm.Vec()[0] != 3 {
+		t.Fatal("incorrect vec in cm:", cm.Vec())
+	}
+}
+
+func TestDistributeDataPoints(t *testing.T) {
+	// The centroid and datapoint setup below is set up such that
+	// dp2 is in c1 but is actually closer to c2. Likewise, dp3
+	// is in c2 but is closer to c1.
+	c1 := newCentroid(vec(1, 1)) // No angle.
+	c2 := newCentroid(vec(1, 9)) // Large angle.
+
+	c1.AddDataPoint(dp(vec(1, 2), 0)) // dp1: closest to c1.vec (cosine simi).
+	c1.AddDataPoint(dp(vec(1, 8), 0)) // dp2: closest to c2.vec (cosine simi).
+
+	c2.AddDataPoint(dp(vec(1, 2), 0)) // dp3: closest to c1.vec (cosine simi).
+	c2.AddDataPoint(dp(vec(1, 8), 0)) // dp4: closest to c2.vec (cosine simi).
+
+	// case: one of the centroids is 'external' (i.e not in CentroidManager).
+	// This is done twice for symmetry: (1) c1 is internal in cm while c2 is
+	// external, and vice versa. This is so that all dps get to their centroid.
+
+	// (1) c1 is internal, c2 is external.
+	cm := newCentroidManager(vec(0))
+	cm.Centroids = []common.Centroid{c1}
+	cm.DistributeDataPoints(1, []common.DataPointReceiver{c2})
+	c1 = cm.Centroids[0] // Save before new cm.
+
+	// (2) c2 is internal, c1 is external.
+	cm = newCentroidManager(vec(0))
+	cm.Centroids = []common.Centroid{c2}
+	cm.DistributeDataPoints(1, []common.DataPointReceiver{c1})
+	c2 = cm.Centroids[0] // Save again for easy readings.
+
+	c1dps := c1.DrainUnordered(9) // Convenience
+	c2dps := c2.DrainUnordered(9) // Convenience
+
+	if len(c1dps) != 2 {
+		t.Fatalf("incorrect dp amount in c1: %v\n", len(c1dps))
+	}
+	if len(c2dps) != 2 {
+		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
+	}
+	// Confirm that dp3 (previously in c2) is now in c1.
+	if c1dps[0].Vec()[1] != 2 || c1dps[1].Vec()[1] != 2 {
+		t.Fatalf("incorrect dp placement in c1: %v\n", c1dps)
+	}
+	// Confirm that dp2 (previously in c1) is now in c2.
+	if c2dps[0].Vec()[1] != 8 || c2dps[1].Vec()[1] != 8 {
+		t.Fatalf("incorrect dp placement in c2: %v\n", c2dps)
+	}
+
+}
+
+// Very similar to TestDistributeDataPoints; that test handles centroids
+// that can be external to a CentroidManager. Another functionality of
+// CentroidManager.DistributeDataPoints is that it acts differently when
+// it gets a nil for the receivers arg -- then, all datapoints are
+// distributed internally to their best centroid.
+// Note, setup (creating centroids + inserting datapoints) and validation
+// (all the if statements) are exactly the same.
+func TestDistributeDataPointsNil(t *testing.T) {
+	// The centroid and datapoint setup below is set up such that
+	// dp2 is in c1 but is actually closer to c2. Likewise, dp3
+	// is in c2 but is closer to c1.
+	c1 := newCentroid(vec(1, 1)) // No angle.
+	c2 := newCentroid(vec(1, 9)) // Large angle.
+
+	c1.AddDataPoint(dp(vec(1, 2), 0)) // dp1: closest to c1.vec (cosine simi).
+	c1.AddDataPoint(dp(vec(1, 8), 0)) // dp2: closest to c2.vec (cosine simi).
+
+	c2.AddDataPoint(dp(vec(1, 2), 0)) // dp3: closest to c1.vec (cosine simi).
+	c2.AddDataPoint(dp(vec(1, 8), 0)) // dp4: closest to c2.vec (cosine simi).
+
+	cm := newCentroidManager(vec(0))
+	cm.Centroids = []common.Centroid{c1, c2}
+
+	// This should move dps as specified above.
+	cm.DistributeDataPoints(2, nil)
+
+	c1dps := cm.Centroids[0].DrainUnordered(9) // Convenience
+	c2dps := cm.Centroids[1].DrainUnordered(9) // Convenience
+
+	if len(c1dps) != 2 {
+		t.Fatalf("incorrect dp amount in c1: %v\n", len(c1dps))
+	}
+	if len(c2dps) != 2 {
+		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
+	}
+	// Confirm that dp3 (previously in c2) is now in c1.
+	if c1dps[0].Vec()[1] != 2 || c1dps[1].Vec()[1] != 2 {
+		t.Fatalf("incorrect dp placement in c1: %v\n", c1dps)
+	}
+	// Confirm that dp2 (previously in c1) is now in c2.
+	if c2dps[0].Vec()[1] != 8 || c2dps[1].Vec()[1] != 8 {
+		t.Fatalf("incorrect dp placement in c2: %v\n", c2dps)
 	}
 }

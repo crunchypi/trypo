@@ -8,8 +8,15 @@ package centoidmanager
 
 import (
 	"trypo/pkg/kmeans/common"
+	"trypo/pkg/mathutils"
 	"trypo/pkg/searchutils"
 )
+
+// Interface hint:
+var _ common.Centroid = new(CentroidManager)
+
+// Abbreviation.
+type dpReceivers = []common.DataPointReceiver
 
 // Named parameter funcs. See NewCentroidManagerArgs.KNNSearchFunc.
 type vecGenerator = func() ([]float64, bool)
@@ -157,7 +164,7 @@ func (cm *CentroidManager) centroidVecGenerator() func() ([]float64, bool) {
 // it will receive 'trimN' (max) common.DataPoints from the old Centroid.
 func (cm *CentroidManager) splitCentroid(atIndex, trimN int) (common.Centroid, bool) {
 	// Note; trimN <= 0 is important, as it ignores auto-splits done in
-	// km.AddpayloadContainer when km.CentroidDPThreshold is not set (i.e 0).
+	// km.AddDataPoint when km.CentroidDPThreshold is not set (i.e 0).
 	if atIndex < 0 || atIndex >= len(cm.Centroids) || trimN <= 0 {
 		return nil, false
 	}
@@ -236,6 +243,105 @@ func (cm *CentroidManager) DrainOrdered(n int) []common.DataPoint {
 	res := make([]common.DataPoint, 0, n)
 	for centroidIndex, portion := range cm.centroidDataPointPortions(n) {
 		res = append(res, cm.Centroids[centroidIndex].DrainOrdered(portion)...)
+	}
+	return res
+}
+
+// Expire calls the method with the same name on all internal Centroids.
+// This should expire all datapoints stored in all centroids, but the exact
+// behavior depends on the implementation of Centroids returned with the
+// func specified when creating this CentroidManager instance (see
+// NewCentroidManagerArgs.CentroidFactoryFunc).
+func (cm *CentroidManager) Expire() {
+	for _, centroid := range cm.Centroids {
+		centroid.Expire()
+	}
+}
+
+// LenDP calls the method with the same name on all internal Centroids,
+// and returns the sum of their returns. This should return the total amount
+// of DataPoints stored in this instance, but the exact behavior depends on
+// the implementation of Centroids returned with the func specified when
+// creating this CentroidManager instance (see CentroidFactoryFunc filed of
+// NewCentroidManagerArgs).
+func (cm *CentroidManager) LenDP() int {
+	res := 0
+	for _, centroid := range cm.Centroids {
+		res += centroid.LenDP()
+	}
+	return res
+}
+
+// MemTrim resets the internal Centroid slice where empty Centroids are
+// not included (so cap=len).
+func (cm *CentroidManager) MemTrim() {
+	centroids := make([]common.Centroid, 0, len(cm.Centroids))
+	for _, centroid := range cm.Centroids {
+		centroid.MemTrim()
+		if centroid.LenDP() != 0 {
+			centroids = append(centroids, centroid)
+		}
+	}
+	cm.Centroids = centroids
+}
+
+// MoveVector sets the internal vector to the average of all internal Centroids.
+func (cm *CentroidManager) MoveVector() bool {
+	for _, centroid := range cm.Centroids {
+		centroid.MoveVector()
+	}
+
+	vec, ok := mathutils.VecMean(cm.centroidVecGenerator())
+	if ok {
+		cm.vec = vec
+	}
+	return ok
+}
+
+// DistributeDataPoints should drain 'n' DataPoints from internal Centroids and
+// give them to the best-fit 'receivers'. The exact behavior, i.e draining and
+// finding 'best-fit' will depend on how the internal Centroids (created with
+// CentroidFactoryFunc field specified when using NewCentroidManagerArgs for
+// NewCentroidManager(...)) imlement the method with the same name. Additionally,
+// 'n' will be divided as evenly/uniformly as possible amongst the internal
+// Centroids (so if n=2 and there are 2 centroids with at least 1 dp each, then
+// both of them will give away 1 dp each). Finally, receivers=nil will change
+// the behavior of this func such that all internal Centroids are receivers.
+// This should in practice distribute datapoints amongst best-fit internal
+// Centroids.
+func (cm *CentroidManager) DistributeDataPoints(n int, receivers dpReceivers) {
+	// use km.Centroids if recievers is not set.
+	if receivers == nil {
+		receivers = make([]common.DataPointReceiver, len(cm.Centroids))
+		for i, centroid := range cm.Centroids {
+			receivers[i] = centroid
+		}
+	}
+	for centroidIndex, portion := range cm.centroidDataPointPortions(n) {
+		cm.Centroids[centroidIndex].DistributeDataPoints(portion, receivers)
+	}
+}
+
+// KNNLookup should find 'k' datapoints that are 'nearest' the 'vec' arg and
+// also remove them from internal storage if 'drain'=true. To be specific,
+// it will find internal Centroids that are best-fit to 'vec', which will
+// depend on how the func specified in NewCentroidManagerArgs.KNNSearchFunc
+// works (this could be cosine similarity, for instance) -- then the method
+// with the same name (KNNLookup) will be called on those Centroids (that
+// behavor depends on how Centroids are created with the CentroidFactoryFunc
+// func, specified when using NewCentroidManagerArgs for NewCentroidManager()).
+func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.DataPoint {
+	res := make([]common.DataPoint, 0, k)
+
+	gen := cm.centroidVecGenerator() // Brevity.
+	for _, centroidIndex := range cm.knnSearchFunc(vec, gen, k) {
+		centroid := cm.Centroids[centroidIndex]
+		for _, dp := range centroid.KNNLookup(vec, k-len(res), drain) {
+			if len(res) >= k {
+				return res
+			}
+			res = append(res, dp)
+		}
 	}
 	return res
 }
