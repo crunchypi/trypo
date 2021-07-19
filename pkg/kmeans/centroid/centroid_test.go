@@ -36,6 +36,18 @@ func vec(v ...float64) []float64 {
 	return _vec
 }
 
+func vecEq(v1, v2 []float64) bool {
+	if len(v1) != len(v2) {
+		return false
+	}
+	for i := 0; i < len(v1); i++ {
+		if v1[i] != v2[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // helper for creating a data point.
 func dp(v []float64, sleepUnits int) *datapoint {
 	_dp := datapoint{vec: v}
@@ -66,7 +78,25 @@ func newCentroid(vec []float64) *Centroid {
 	return c
 }
 
+// Unexported addDataPoint
 func TestAddDataPoint(t *testing.T) {
+	c := newCentroid(vec(1, 1)) // vec here doesn't matter.
+
+	// Add first dp, new c.vec should be 3,3
+	c.addDataPoint(dp(vec(3, 3), 0))
+	if !vecEq(c.Vec(), vec(3, 3)) {
+		t.Fatalf("did not adjust internal vector correctly: %v", c.Vec())
+	}
+
+	// (3,3) + (5,5) = (4,4)
+	c.addDataPoint(dp(vec(5, 5), 0))
+	if !vecEq(c.Vec(), vec(4, 4)) {
+		t.Fatalf("did not adjust internal vector correctly: %v", c.Vec())
+	}
+
+}
+
+func TestAddDataPointExported(t *testing.T) {
 	c := newCentroid(vec(1, 1, 1))
 	if !c.AddDataPoint(dp(vec(2, 2, 2), 0)) {
 
@@ -75,6 +105,40 @@ func TestAddDataPoint(t *testing.T) {
 
 	if len(c.DataPoints) != 1 {
 		t.Error("didn't add datapoint")
+	}
+}
+
+func TestRmDataPoint(t *testing.T) {
+	c := newCentroid(vec(0, 0))
+	c.DataPoints = []common.DataPoint{
+		dp(vec(2, 2), 0), // dp1.
+		dp(vec(4, 4), 0), // dp2.
+		dp(vec(6, 6), 0), // dp3.
+		dp(vec(8, 8), 0), // dp4.
+	}
+	c.vec = vec(5, 5) // Mean of all dps.
+
+	c.rmDataPoint(3) // dp4.
+	if !vecEq(c.Vec(), vec(4, 4)) {
+		t.Fatalf("did not adjust internal vec correctly (no. 1): %v", c.Vec())
+	}
+
+	c.rmDataPoint(0) // dp1.
+	if !vecEq(c.Vec(), vec(5, 5)) {
+		t.Fatalf("did not adjust internal vec correctly (no. 2): %v", c.Vec())
+	}
+
+	c.rmDataPoint(0) // dp2, note index shifted
+	if !vecEq(c.Vec(), vec(6, 6)) {
+		t.Fatalf("did not adjust internal vec correctly (no. 3): %v", c.Vec())
+	}
+
+	c.rmDataPoint(0) // dp3, note index shifted
+	if !vecEq(c.Vec(), vec(6, 6)) {
+		t.Fatalf("did not adjust internal vec correctly (no. 3): %v", c.Vec())
+	}
+	if len(c.DataPoints) != 0 {
+		t.Errorf("didn't remove all dps: %v", len(c.DataPoints))
 	}
 }
 

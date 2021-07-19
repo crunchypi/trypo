@@ -76,20 +76,37 @@ func NewCentroid(args NewCentroidArgs) (*Centroid, bool) {
 // Vec returns the vector of a centroid.
 func (c *Centroid) Vec() []float64 { return c.vec }
 
+// addDataPoint adjusts the internal vector while adding new dps.
+func (c *Centroid) addDataPoint(dp common.DataPoint) {
+	// Auto-adjust internal vec.
+	c.vec = mathutils.VecMulScalar(c.vec, float64(len(c.DataPoints)))
+	c.vec, _ = mathutils.VecAdd(c.vec, dp.Vec())
+	c.vec = mathutils.VecDivScalar(c.vec, float64(len(c.DataPoints))+1)
+
+	c.DataPoints = append(c.DataPoints, dp)
+}
+
 // AddDataPoint adds a DataPoint the relevant centroid. Returns false if the vector
 // contained in dp is of different length that the vector of the centroid.
 func (c *Centroid) AddDataPoint(dp common.DataPoint) bool {
 	if len(dp.Vec()) != len(c.vec) || dp.Expired() {
 		return false
 	}
-	c.DataPoints = append(c.DataPoints, dp)
+	c.addDataPoint(dp)
 	return true
 }
 
-// rmDataPoint removes an internal DataPoint at an index, this is done unsafely
-// (without bounds checking) on purpose. Note, it is a very simple thing but
-// was put here for code clarity where this method is called.
+// rmDataPoint adjusts the internal vector while removing new dps at an
+// index pointing to c.DataPoints. The removal process itself is done with
+// unsafe reslicing (without bounds checking).
 func (c *Centroid) rmDataPoint(index int) {
+	// Auto-adjust internal vec.
+	if len(c.DataPoints) > 1 { // guard 0 div error.
+		dp := c.DataPoints[index]
+		c.vec = mathutils.VecMulScalar(c.vec, float64(len(c.DataPoints)))
+		c.vec, _ = mathutils.VecSub(c.vec, dp.Vec())
+		c.vec = mathutils.VecDivScalar(c.vec, float64(len(c.DataPoints)-1))
+	}
 	// _Should_ be re-sliced with O(1) going by Go documentation/code.
 	c.DataPoints = append(c.DataPoints[:index], c.DataPoints[index+1:]...)
 }
@@ -162,21 +179,23 @@ func (c *Centroid) Expire() {
 func (c *Centroid) LenDP() int { return len(c.DataPoints) }
 
 // MemTrim creates a new internal DataPoint slice where capacity equals len.
-// Note, it's a costly operation.
 func (c *Centroid) MemTrim() {
-	// @ Currently inefficient since memory is essentially doubled
-	// @ while doing this procedure.
-	dp := make([]common.DataPoint, 0, len(c.DataPoints))
-	for i := 0; i < len(c.DataPoints); i++ {
-		if !c.DataPoints[i].Expired() {
-			dp = append(dp, c.DataPoints[i])
-		}
+	dps := make([]common.DataPoint, 0)
+	// Using DrainUnordered because it removes expired dps with c.rmDataPoint,
+	// which adjusts c.vec as well. Also, not using len(c.DataPoints) as arg
+	// to c.DrainUnordered(...) because that would create a slice of that cap,
+	// which would make this method (MemTrim) pointless, as it reduces cap.
+	for len(c.DataPoints) > 0 {
+		dps = append(dps, c.DrainUnordered(1)...)
 	}
-	c.DataPoints = dp
+	c.DataPoints = dps
 }
 
 // MoveVector moves the internal centroid vector to be the mean of all
-// contained DataPoints.
+// contained DataPoints. This should normally not be necessary, as all
+// methods that add/rm datapoints auto-adjust the internal vector, but
+// it is still available in case those methods are somehow bypassed in
+// the future.
 func (c *Centroid) MoveVector() bool {
 	vec, ok := mathutils.VecMean(c.dataPointVecGenerator())
 	if ok {
