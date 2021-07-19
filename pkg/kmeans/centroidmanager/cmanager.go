@@ -433,3 +433,9 @@ func (cm *CentroidManager) MergeCentroids(merge func(common.Centroid) bool) {
 		}
 	}
 }
+
+// DangerExposeCentroidSlice simply exposes internal slice of Centroids.
+// Altering this slice might be dangerous/lead to internal state issues.
+func (cm *CentroidManager) DangerExposeCentroidSlice() []common.Centroid {
+	return cm.Centroids
+}
