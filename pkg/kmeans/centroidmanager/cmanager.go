@@ -345,3 +345,92 @@ func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.
 	}
 	return res
 }
+
+// NearestCentroid attempts to find a Centroid that is 'nearest' the specified
+// vec; returns false if there are no internal Centroids, or if none of them
+// have a matching vector (different vector dim). 'nearest' will depend on how
+// the CentroidManager search func works (specified as KNNSearchFunc field in
+// NewCentroidManagerArgs when using NewCentroidManager(...)).
+func (cm *CentroidManager) NearestCentroid(vec []float64) (common.Centroid, bool) {
+	indexes := cm.knnSearchFunc(vec, cm.centroidVecGenerator(), 1)
+	if len(indexes) == 0 {
+		return nil, false
+	}
+	return cm.Centroids[indexes[0]], true
+}
+
+// SplitCentroids iterates through all internal Centroids and passes them to
+// the evaluation func 'splits' -- if it returns true, then that centroid will
+// be split in half. Example:
+//	split := func(c common.Centroid) { return c.LenDP() > 100 }
+// .. will split in half all centroids that have more than 100 internal DPs.
+func (cm *CentroidManager) SplitCentroids(split func(common.Centroid) bool) {
+	newCentroids := make([]common.Centroid, 0, 10)
+
+	for i, centroid := range cm.Centroids {
+		if !split(centroid) {
+			continue
+		}
+
+		newCentroid, splitOK := cm.splitCentroid(i, centroid.LenDP()/2)
+		if splitOK {
+			newCentroids = append(newCentroids, newCentroid)
+		}
+	}
+	cm.Centroids = append(cm.Centroids, newCentroids...)
+}
+
+// MergeCentroids iterates through all internal Centroids and passes them to
+// the evaluation func 'merge' -- if it returns true, then that centroid will
+// be merged to the nearest other Centroids until the evaluation func is
+// satisfied (eval func is not done on the aforementioned other Centroids).
+// 'nearest' will depend on how the CentroidManager search func works (specifie
+// as KNNSearchFunc field in NewCentroidManagerArgs when using NewCentroidManager()).
+// Example 1:
+//	merge := func(c common.Centroid) { return true }
+// ... will merge all centroids together.
+// Example 2:
+//	merge := func(c common.Centroid) { return c.LenDP() < 10 }
+// ... will find all centroids that have less than 10 dps, then merge them
+// into their _nearest_ other centroids until they have at least 10 dps.
+func (cm *CentroidManager) MergeCentroids(merge func(common.Centroid) bool) {
+	// When two centroids are merged, one of them will be marked for deletion
+	// here, to prevent duplication of internal data. Keys=cm.Centroids indexes.
+	delMarks := make(map[int]bool, len(cm.Centroids))
+	for i, candidate := range cm.Centroids {
+
+		if !merge(candidate) || delMarks[i] {
+			continue
+		}
+		// Abbreviations:
+		vec := candidate.Vec()
+		gen := cm.centroidVecGenerator()
+		k := len(cm.Centroids)
+
+		for _, centroidIndex := range cm.knnSearchFunc(vec, gen, k) {
+			// Guard identity merge + use of centroids marked for deletion.
+			if centroidIndex == i || delMarks[centroidIndex] {
+				continue
+			}
+			// Merge other into candidate.
+			other := cm.Centroids[centroidIndex]
+			for _, dp := range other.DrainUnordered(other.LenDP()) {
+				candidate.AddDataPoint(dp)
+			}
+			// Mark other for deletion, it's merged into candidate.
+			delMarks[centroidIndex] = true
+
+			if !merge(candidate) { // Check if satisfied.
+				break
+			}
+		}
+	}
+	// Filter out centroids marked for deletion from cm.Centroids.
+	// Note, the reason for backwards looping is to prevent index
+	// shifting issues.
+	for i := len(cm.Centroids) - 1; i > -1; i-- {
+		if delMarks[i] {
+			cm.Centroids = append(cm.Centroids[:i], cm.Centroids[i+1:]...)
+		}
+	}
+}

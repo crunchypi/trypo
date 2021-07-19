@@ -490,3 +490,79 @@ func TestDistributeDataPointsNil(t *testing.T) {
 		t.Fatalf("incorrect dp placement in c2: %v\n", c2dps)
 	}
 }
+
+func TestNearestCentroid(t *testing.T) {
+	c1 := newCentroid(vec(1, 2))
+	c2 := newCentroid(vec(1, 3))
+	c3 := newCentroid(vec(1, 4))
+
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []common.Centroid{c1, c2, c3}
+
+	c, ok := cm.NearestCentroid(vec(1, 5))
+	if !ok {
+		t.Fatal("didn't get any centroid")
+	}
+	if c.Vec()[1] != c3.Vec()[1] {
+		t.Fatalf("incorrect centroid with vec %v", c.Vec())
+	}
+}
+
+func TestSplit(t *testing.T) {
+	dps := []common.DataPoint{
+		dp(vec(1), 0),
+		dp(vec(1), 0),
+		dp(vec(1), 0),
+		dp(vec(1), 0),
+	}
+	cm := newCentroidManager(vec(0))
+	cm.centroidDPThreshold = len(dps) + 1
+	for _, dp := range dps {
+		cm.AddDataPoint(dp)
+	}
+
+	cm.SplitCentroids(func(c common.Centroid) bool {
+		return c.LenDP() > 2
+	})
+	if len(cm.Centroids) != 2 {
+		t.Fatal("incorrect centroid count after split")
+	}
+
+	l1 := cm.Centroids[0].LenDP()
+	l2 := cm.Centroids[1].LenDP()
+	if l1 != 2 || l2 != 2 {
+		t.Fatal("uneven datapoint distribution after split:", l1, l2)
+	}
+}
+
+func TestMergeCentroids(t *testing.T) {
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(vec(1, 9))
+	c3 := newCentroid(vec(1, 2)) // closest to c1.
+
+	// Vecs here do not matter.
+	c1.AddDataPoint(dp(vec(0, 0), 0))
+	c2.AddDataPoint(dp(vec(0, 0), 0))
+	c3.AddDataPoint(dp(vec(0, 0), 0))
+	c3.AddDataPoint(dp(vec(0, 0), 0))
+
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []common.Centroid{c1, c2, c3}
+
+	cm.MergeCentroids(func(c common.Centroid) bool {
+		// Merge condition for c3. So the nearest, c1, should
+		// be merged into it (c3).
+		return c.LenDP() == 2
+	})
+	t.Log(len(cm.Centroids))
+	if len(cm.Centroids) != 2 {
+		t.Fatalf("unexpected cm.Centroids len: %v", len(cm.Centroids))
+	}
+	// 1) Merge cond for c3, nearest is c1.
+	// 2) c1 merged into c3.
+	// 3) cm.Centroids= [c2, c3].
+	if cm.Centroids[1].LenDP() != 3 {
+		t.Fatalf("c3 didn't get merged into c1")
+	}
+
+}
