@@ -198,23 +198,37 @@ func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 		c := cm.centroidFactoryFunc(dp.Vec())
 		c.AddDataPoint(dp)
 		cm.Centroids = append(cm.Centroids, c)
+		cm.vec = c.Vec()
 		return true
 	}
 
-	// Try add to existing centroid.
+	// Try find nearest centroid.
 	indexes := cm.knnSearchFunc(dp.Vec(), cm.centroidVecGenerator(), 1)
 	if len(indexes) == 0 {
 		return false
 	}
-	addOK := cm.Centroids[indexes[0]].AddDataPoint(dp)
-	// Check add and whether or not to split the relevant centroid.
-	if addOK && cm.Centroids[indexes[0]].LenDP() >= cm.centroidDPThreshold {
+
+	// Try add to nearest centroid.
+	centroid := cm.Centroids[indexes[0]] // Abbreviation.
+	centroidOldVec := centroid.Vec()     // for next block.
+	if !centroid.AddDataPoint(dp) {
+		return false
+	}
+
+	// Adjust cm.vec
+	cm.vec = mathutils.VecMulScalar(cm.vec, float64(len(cm.Centroids)))
+	cm.vec, _ = mathutils.VecSub(cm.vec, centroidOldVec)
+	cm.vec, _ = mathutils.VecAdd(cm.vec, centroid.Vec())
+	cm.vec = mathutils.VecDivScalar(cm.vec, float64(len(cm.Centroids)))
+
+	// Potential centroid split.
+	if centroid.LenDP() >= cm.centroidDPThreshold {
 		newCentroid, splitOK := cm.splitCentroid(indexes[0], cm.centroidDPThreshold/2)
 		if splitOK {
 			cm.Centroids = append(cm.Centroids, newCentroid)
 		}
 	}
-	return addOK
+	return true
 }
 
 // DrainUnordered drains max n datapoints from internal centroids in an order

@@ -89,6 +89,35 @@ func vec(v ...float64) []float64 {
 	return _vec
 }
 
+func vecEq(v1, v2 []float64) bool {
+	if len(v1) != len(v2) {
+		return false
+	}
+	for i := 0; i < len(v1); i++ {
+		if v1[i] != v2[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func dps2Vecs(dps []common.DataPoint) [][]float64 {
+	res := make([][]float64, len(dps))
+	for i, dp := range dps {
+		res[i] = dp.Vec()
+	}
+	return res
+}
+
+func containsVec(vec []float64, vecs [][]float64) bool {
+	for _, other := range vecs {
+		if vecEq(vec, other) {
+			return true
+		}
+	}
+	return false
+}
+
 // helper for creating a data point.
 func dp(v []float64, sleepUnits int) *datapoint {
 	_dp := datapoint{vec: v}
@@ -213,13 +242,13 @@ func TestSplitCentroid(t *testing.T) {
 	}
 }
 
-func TestAddDataPoint(t *testing.T) {
+// AddDataPoint case 1: No Centroids in CentroidManager.
+func TestAddDataPointFirst(t *testing.T) {
+	cm := newCentroidManager(vec(0, 0))
 	dps := []common.DataPoint{
 		dp(vec(1, 1), 0),
 		dp(vec(2, 2), 0),
 	}
-	// Case 1: No centroids in KMeans instance.
-	cm := newCentroidManager(vec(0, 0))
 	for _, dp := range dps {
 		cm.AddDataPoint(dp)
 	}
@@ -229,10 +258,16 @@ func TestAddDataPoint(t *testing.T) {
 	if cm.Centroids[0].LenDP() != 2 {
 		t.Fatal("new centroid didn't get enough datapoints")
 	}
+}
 
-	// Case 2: 2 Centroids, each should get a datapoint each
-	// due to their vector relationship to dps.
-	cm = newCentroidManager(vec(0, 0))
+// AddDataPoint case 2: 2 Centroids exist, each should get a dp.
+func TestAddDataPointOldCentroids(t *testing.T) {
+	dps := []common.DataPoint{
+		dp(vec(1, 2), 0),
+		dp(vec(1, 3), 0),
+	}
+
+	cm := newCentroidManager(vec(0, 0))
 	cm.Centroids = []common.Centroid{
 		newCentroid(dps[0].Vec()),
 		newCentroid(dps[1].Vec()),
@@ -253,6 +288,34 @@ func TestAddDataPoint(t *testing.T) {
 		if drain[0].Vec()[0] != c.Vec()[0] {
 			t.Fatalf("centroid index %d got incorrect dp: %v\n", i, c)
 		}
+	}
+}
+
+// AddDataPoint case 3: Auto-adjusting internal vector.
+func TestAddDataPointInternalVec(t *testing.T) {
+	d1 := dp(vec(1, 1), 0)
+	c1 := newCentroid(d1.Vec())
+	c1.AddDataPoint(d1)
+
+	d2 := dp(vec(3, 3), 0)
+	c2 := newCentroid(d2.Vec())
+
+	// vec(2,2) is mean of d1.vec + d2.vec
+	cm := newCentroidManager(vec(2, 2))
+	cm.Centroids = []common.Centroid{c1, c2}
+
+	// mean(d1 + d2 + vec(5,5)) = vec(3,3)
+	cm.AddDataPoint(dp(vec(5, 5), 0))
+	if !vecEq(cm.Vec(), vec(3, 3)) {
+		t.Errorf("didn't auto-adjust cm vector correctly: %v", cm.Vec())
+	}
+}
+
+// AddDataPoint case 4: Auto-splitting centroids.
+func TestAddDataPointSplit(t *testing.T) {
+	dps := []common.DataPoint{
+		dp(vec(1, 1), 0),
+		dp(vec(2, 2), 0),
 	}
 
 	// Case 3: Auto-splitting centroids.
@@ -302,11 +365,19 @@ func TestDrainUnordered(t *testing.T) {
 func TestDrainOrdered(t *testing.T) {
 	cm := newCentroidManager(vec(0))
 
-	c1 := newCentroid(vec(1, 1))
-	c2 := newCentroid(vec(5, 5))
+	c1 := newCentroid(vec(0, 0))
+	c2 := newCentroid(vec(0, 0))
 
-	c1.AddDataPoint(dp(vec(1, 2), 0)) // Should _not_ be drained.
-	c1.AddDataPoint(dp(vec(1, 3), 0)) // Should be drained.
+	// This setup might look a bit weird, since c1 adds 3 dps
+	// with the same vector first. This tests assumes that
+	// kmeans/centroid.Centroid is used, and that impl (at the
+	// moment of writing) updates the internal vector on each add.
+	// vec(1,3) is added three times just to make sure that vec(1,9)
+	// is definitively furthest away from the mean.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // Should _not_ be drained.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // Should _not_ be drained.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // Should _not_ be drained.
+	c1.AddDataPoint(dp(vec(1, 9), 0)) // Should be drained.
 	c2.AddDataPoint(dp(vec(5, 5), 0)) // Should be drained as well.
 
 	cm.Centroids = []common.Centroid{c1, c2}
@@ -315,7 +386,7 @@ func TestDrainOrdered(t *testing.T) {
 	if len(dps) != 2 {
 		t.Fatal("incorrect drain amt:", len(dps))
 	}
-	if cm.Centroids[0].LenDP() != 1 {
+	if cm.Centroids[0].LenDP() != 3 {
 		t.Fatal("remainder of dps in centroid 1 is incorrect:", c1.LenDP())
 	}
 	if cm.Centroids[1].LenDP() != 0 {
@@ -327,12 +398,12 @@ func TestDrainOrdered(t *testing.T) {
 				(1) Both centroids have at least 1 dp.
 				(2) The km.DrainOrdered call above has 2 as input.
 
-		But simply checking 'if dps[0].Vec[1] == 3' isn't enough
+		But simply checking 'if dps[0].Vec[1] == 9' isn't enough
 		because the map created in km.DrainOrdered is funnily not
 		deterministic, even with a deterministic test...
 		Hence the _and_ clause.
 	*/
-	if dps[0].Vec()[1] != 3 && dps[1].Vec()[1] != 3 {
+	if dps[0].Vec()[1] != 9 && dps[1].Vec()[1] != 9 {
 		t.Fatal("didn't drain dp furthest from vec. dps:", dps)
 	}
 }
@@ -399,16 +470,27 @@ func TestMoveVector(t *testing.T) {
 
 func TestDistributeDataPoints(t *testing.T) {
 	// The centroid and datapoint setup below is set up such that
-	// dp2 is in c1 but is actually closer to c2. Likewise, dp3
+	// dp4 is in c1 but is actually closer to c2. Likewise, dp8
 	// is in c2 but is closer to c1.
-	c1 := newCentroid(vec(1, 1)) // No angle.
-	c2 := newCentroid(vec(1, 9)) // Large angle.
 
-	c1.AddDataPoint(dp(vec(1, 2), 0)) // dp1: closest to c1.vec (cosine simi).
-	c1.AddDataPoint(dp(vec(1, 8), 0)) // dp2: closest to c2.vec (cosine simi).
+	// These 2 vectors don't matter. This test assumed that
+	// kmeans/centroid.Centroid is used, and that impl (at the
+	// moment of writing) updates the internal vector or each dp
+	// addition (which will be done in the next code blocks).
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(vec(1, 1))
 
-	c2.AddDataPoint(dp(vec(1, 2), 0)) // dp3: closest to c1.vec (cosine simi).
-	c2.AddDataPoint(dp(vec(1, 8), 0)) // dp4: closest to c2.vec (cosine simi).
+	// Mean: (1, 4.5) : Small angle.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp1
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp2
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp3
+	c1.AddDataPoint(dp(vec(1, 9), 0)) // dp4: closest to c2.
+
+	// Mean: (1, 7.5) : Large angle
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp5
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp6
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp7
+	c2.AddDataPoint(dp(vec(1, 3), 0)) // dp8: closest to c1.
 
 	// case: one of the centroids is 'external' (i.e not in CentroidManager).
 	// This is done twice for symmetry: (1) c1 is internal in cm while c2 is
@@ -429,21 +511,21 @@ func TestDistributeDataPoints(t *testing.T) {
 	c1dps := c1.DrainUnordered(9) // Convenience
 	c2dps := c2.DrainUnordered(9) // Convenience
 
-	if len(c1dps) != 2 {
+	if len(c1dps) != 4 {
 		t.Fatalf("incorrect dp amount in c1: %v\n", len(c1dps))
 	}
-	if len(c2dps) != 2 {
+	if len(c2dps) != 4 {
 		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
 	}
-	// Confirm that dp3 (previously in c2) is now in c1.
-	if c1dps[0].Vec()[1] != 2 || c1dps[1].Vec()[1] != 2 {
-		t.Fatalf("incorrect dp placement in c1: %v\n", c1dps)
-	}
-	// Confirm that dp2 (previously in c1) is now in c2.
-	if c2dps[0].Vec()[1] != 8 || c2dps[1].Vec()[1] != 8 {
-		t.Fatalf("incorrect dp placement in c2: %v\n", c2dps)
+	// Confirm that dp4 is no longer in c1 (moved to c2).
+	if containsVec(vec(1, 9), dps2Vecs(c1dps)) {
+		t.Fatalf("c1dps still contains vec with bad fit.")
 	}
 
+	// Confirm that dp8 is no longer in c2 (moved to c1).
+	if containsVec(vec(1, 3), dps2Vecs(c2dps)) {
+		t.Fatalf("c1dps still contains vec with bad fit.")
+	}
 }
 
 // Very similar to TestDistributeDataPoints; that test handles centroids
@@ -455,16 +537,27 @@ func TestDistributeDataPoints(t *testing.T) {
 // (all the if statements) are exactly the same.
 func TestDistributeDataPointsNil(t *testing.T) {
 	// The centroid and datapoint setup below is set up such that
-	// dp2 is in c1 but is actually closer to c2. Likewise, dp3
+	// dp4 is in c1 but is actually closer to c2. Likewise, dp8
 	// is in c2 but is closer to c1.
-	c1 := newCentroid(vec(1, 1)) // No angle.
-	c2 := newCentroid(vec(1, 9)) // Large angle.
 
-	c1.AddDataPoint(dp(vec(1, 2), 0)) // dp1: closest to c1.vec (cosine simi).
-	c1.AddDataPoint(dp(vec(1, 8), 0)) // dp2: closest to c2.vec (cosine simi).
+	// These 2 vectors don't matter. This test assumed that
+	// kmeans/centroid.Centroid is used, and that impl (at the
+	// moment of writing) updates the internal vector or each dp
+	// addition (which will be done in the next code blocks).
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(vec(1, 1))
 
-	c2.AddDataPoint(dp(vec(1, 2), 0)) // dp3: closest to c1.vec (cosine simi).
-	c2.AddDataPoint(dp(vec(1, 8), 0)) // dp4: closest to c2.vec (cosine simi).
+	// Mean: (1, 4.5) : Small angle.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp1
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp2
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp3
+	c1.AddDataPoint(dp(vec(1, 9), 0)) // dp4: closest to c2.
+
+	// Mean: (1, 7.5) : Large angle
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp5
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp6
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp7
+	c2.AddDataPoint(dp(vec(1, 3), 0)) // dp8: closest to c1.
 
 	cm := newCentroidManager(vec(0))
 	cm.Centroids = []common.Centroid{c1, c2}
@@ -472,22 +565,23 @@ func TestDistributeDataPointsNil(t *testing.T) {
 	// This should move dps as specified above.
 	cm.DistributeDataPoints(2, nil)
 
-	c1dps := cm.Centroids[0].DrainUnordered(9) // Convenience
-	c2dps := cm.Centroids[1].DrainUnordered(9) // Convenience
+	c1dps := c1.DrainUnordered(9) // Convenience
+	c2dps := c2.DrainUnordered(9) // Convenience
 
-	if len(c1dps) != 2 {
+	if len(c1dps) != 4 {
 		t.Fatalf("incorrect dp amount in c1: %v\n", len(c1dps))
 	}
-	if len(c2dps) != 2 {
+	if len(c2dps) != 4 {
 		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
 	}
-	// Confirm that dp3 (previously in c2) is now in c1.
-	if c1dps[0].Vec()[1] != 2 || c1dps[1].Vec()[1] != 2 {
-		t.Fatalf("incorrect dp placement in c1: %v\n", c1dps)
+	// Confirm that dp4 is no longer in c1 (moved to c2).
+	if containsVec(vec(1, 9), dps2Vecs(c1dps)) {
+		t.Fatalf("c1dps still contains vec with bad fit.")
 	}
-	// Confirm that dp2 (previously in c1) is now in c2.
-	if c2dps[0].Vec()[1] != 8 || c2dps[1].Vec()[1] != 8 {
-		t.Fatalf("incorrect dp placement in c2: %v\n", c2dps)
+
+	// Confirm that dp8 is no longer in c2 (moved to c1).
+	if containsVec(vec(1, 3), dps2Vecs(c2dps)) {
+		t.Fatalf("c1dps still contains vec with bad fit.")
 	}
 }
 
@@ -554,7 +648,6 @@ func TestMergeCentroids(t *testing.T) {
 		// be merged into it (c3).
 		return c.LenDP() == 2
 	})
-	t.Log(len(cm.Centroids))
 	if len(cm.Centroids) != 2 {
 		t.Fatalf("unexpected cm.Centroids len: %v", len(cm.Centroids))
 	}
