@@ -151,11 +151,13 @@ func (c *Centroid) DrainOrdered(n int) []common.DataPoint {
 	res := make([]common.DataPoint, 0, n)
 	// Furthest neigh.
 	indexes := c.kfnSearchFunc(c.vec, c.dataPointVecGenerator(), n)
+	for _, index := range indexes {
+		res = append(res, c.DataPoints[index])
+	}
 	// Sorting because this method will remove datapoints at these indexes, and
 	// having things out of order can cause a rugpull (c.DataPoints index shift).
 	sort.Ints(indexes)
 	for i := len(indexes) - 1; i > -1; i-- { // Backwards for removal safety.
-		res = append(res, c.DataPoints[indexes[i]])
 		c.rmDataPoint(indexes[i])
 	}
 	return res
@@ -250,8 +252,11 @@ func (c *Centroid) KNNLookup(vec []float64, k int, drain bool) []common.DataPoin
 
 	// Secondary loop because ints in indexes might not be ordered.
 	if drain {
-		for _, i := range indexes {
-			c.rmDataPoint(i)
+		// Sorting because this method will remove datapoints at these indexes, and
+		// having things out of order can cause a rugpull (c.DataPoints index shift).
+		sort.Ints(indexes)
+		for i := len(indexes) - 1; i > -1; i-- {
+			c.rmDataPoint(indexes[i])
 		}
 	}
 	return res
