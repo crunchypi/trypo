@@ -9,7 +9,6 @@ package centoidmanager
 import (
 	"trypo/pkg/kmeans/common"
 	"trypo/pkg/mathutils"
-	"trypo/pkg/searchutils"
 )
 
 // Interface hint:
@@ -203,7 +202,7 @@ func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 	}
 
 	// Try add to existing centroid.
-	indexes := searchutils.KNNEuc(dp.Vec(), cm.centroidVecGenerator(), 1)
+	indexes := cm.knnSearchFunc(dp.Vec(), cm.centroidVecGenerator(), 1)
 	if len(indexes) == 0 {
 		return false
 	}
