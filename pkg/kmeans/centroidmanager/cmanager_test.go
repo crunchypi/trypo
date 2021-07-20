@@ -293,21 +293,24 @@ func TestAddDataPointOldCentroids(t *testing.T) {
 
 // AddDataPoint case 3: Auto-adjusting internal vector.
 func TestAddDataPointInternalVec(t *testing.T) {
-	d1 := dp(vec(1, 1), 0)
-	c1 := newCentroid(d1.Vec())
-	c1.AddDataPoint(d1)
+	if !t.Run("Test Dependency 1", TestMoveVector) {
+		t.Fatalf("Expected TestMoveVector to work, it did not.")
+	}
+	// Note, all vecs below are arbitrary.
 
-	d2 := dp(vec(3, 3), 0)
-	c2 := newCentroid(d2.Vec())
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(vec(3, 2))
 
-	// vec(2,2) is mean of d1.vec + d2.vec
 	cm := newCentroidManager(vec(2, 2))
 	cm.Centroids = []common.Centroid{c1, c2}
+	cm.MoveVector()
 
-	// mean(d1 + d2 + vec(5,5)) = vec(3,3)
 	cm.AddDataPoint(dp(vec(5, 5), 0))
-	if !vecEq(cm.Vec(), vec(3, 3)) {
-		t.Errorf("didn't auto-adjust cm vector correctly: %v", cm.Vec())
+
+	vecBkp := vec(cm.vec...)
+	cm.MoveVector()
+	if !vecEq(vecBkp, cm.vec) {
+		t.Fatalf("auto-adjusted cm vec is incorrect. want %v, have %v", cm.vec, vecBkp)
 	}
 }
 
@@ -339,17 +342,23 @@ func TestAddDataPointSplit(t *testing.T) {
 }
 
 func TestDrainUnordered(t *testing.T) {
-	cm := newCentroidManager(vec(0, 0))
+	if !t.Run("Test Dependency 1", TestMoveVector) {
+		t.Fatalf("Expected TestMoveVector to work, it did not.")
+	}
+	cm := newCentroidManager(vec(0))
 
-	c1 := newCentroid(vec(1))
-	c2 := newCentroid(vec(1))
+	c1 := newCentroid(vec(0))
+	c2 := newCentroid(vec(0))
 
-	c1.AddDataPoint(dp(vec(1), 0))
-	c1.AddDataPoint(dp(vec(1), 0))
-	c2.AddDataPoint(dp(vec(1), 0))
+	c1.AddDataPoint(dp(vec(1), 0)) // dp1.
+	c1.AddDataPoint(dp(vec(3), 0)) // dp2.
+	c2.AddDataPoint(dp(vec(5), 0)) // dp3.
 
 	cm.Centroids = []common.Centroid{c1, c2}
+	cm.MoveVector() // For auto-adjusting vec test.
 
+	// dp 1 & 3 should be removed, as dp1 is first in c1
+	// and dp2 is first in c2.
 	dps := cm.DrainUnordered(2)
 	if len(dps) != 2 {
 		t.Fatal("incorrect drain amt:", len(dps))
@@ -360,9 +369,19 @@ func TestDrainUnordered(t *testing.T) {
 	if cm.Centroids[1].LenDP() != 0 {
 		t.Fatal("remainder of dps in centroid 2 is incorrect:", c2.LenDP())
 	}
+
+	// Auto-adjust vec test.
+	vecBkp := vec(cm.vec...)
+	cm.MoveVector()
+	if !vecEq(vecBkp, cm.vec) {
+		t.Fatalf("auto-adjusted cm vec is incorrect. want %v, have %v", cm.vec, vecBkp)
+	}
 }
 
 func TestDrainOrdered(t *testing.T) {
+	if !t.Run("Test Dependency 1", TestMoveVector) {
+		t.Fatalf("Expected TestMoveVector to work, it did not.")
+	}
 	cm := newCentroidManager(vec(0))
 
 	c1 := newCentroid(vec(0, 0))
@@ -381,6 +400,7 @@ func TestDrainOrdered(t *testing.T) {
 	c2.AddDataPoint(dp(vec(5, 5), 0)) // Should be drained as well.
 
 	cm.Centroids = []common.Centroid{c1, c2}
+	cm.MoveVector() // For auto-adjusting vec test.
 
 	dps := cm.DrainOrdered(2)
 	if len(dps) != 2 {
@@ -406,9 +426,21 @@ func TestDrainOrdered(t *testing.T) {
 	if dps[0].Vec()[1] != 9 && dps[1].Vec()[1] != 9 {
 		t.Fatal("didn't drain dp furthest from vec. dps:", dps)
 	}
+
+	// Auto-adjust vec test.
+	vecBkp := vec(cm.vec...)
+	cm.MoveVector()
+	if !vecEq(vecBkp, cm.vec) {
+		t.Fatalf("auto-adjusted cm vec is incorrect. want %v, have %v", cm.vec, vecBkp)
+	}
+
 }
 
 func TestExpire(t *testing.T) {
+	if !t.Run("Test Dependency 1", TestMoveVector) {
+		t.Fatalf("Expected TestMoveVector to work, it did not.")
+	}
+
 	c1 := newCentroid(vec(1))
 	c2 := newCentroid(vec(1))
 
@@ -417,6 +449,7 @@ func TestExpire(t *testing.T) {
 
 	cm := newCentroidManager(vec(1))
 	cm.Centroids = []common.Centroid{c1, c2}
+	cm.MoveVector() // For auto-adjusting vec test.
 
 	sleep()
 	cm.Expire()
@@ -426,6 +459,13 @@ func TestExpire(t *testing.T) {
 	}
 	if cm.Centroids[1].LenDP() != 1 {
 		t.Fatal("centroid 2 (c2) don't have an outdated datapoint but it was removed")
+	}
+
+	// Auto-adjust vec test.
+	vecBkp := vec(cm.vec...)
+	cm.MoveVector()
+	if !vecEq(vecBkp, cm.vec) {
+		t.Fatalf("auto-adjusted cm vec is incorrect. want %v, have %v", cm.vec, vecBkp)
 	}
 }
 
@@ -630,18 +670,23 @@ func TestSplit(t *testing.T) {
 }
 
 func TestMergeCentroids(t *testing.T) {
+	if !t.Run("Test Dependency 1", TestMoveVector) {
+		t.Fatalf("Expected TestMoveVector to work, it did not.")
+	}
+
 	c1 := newCentroid(vec(1, 1))
 	c2 := newCentroid(vec(1, 9))
 	c3 := newCentroid(vec(1, 2)) // closest to c1.
 
-	// Vecs here do not matter.
-	c1.AddDataPoint(dp(vec(0, 0), 0))
-	c2.AddDataPoint(dp(vec(0, 0), 0))
-	c3.AddDataPoint(dp(vec(0, 0), 0))
-	c3.AddDataPoint(dp(vec(0, 0), 0))
+	// Vecs here only matter for vector auto-adjust test.
+	c1.AddDataPoint(dp(vec(1, 3), 0))
+	c2.AddDataPoint(dp(vec(2, 5), 0))
+	c3.AddDataPoint(dp(vec(9, 8), 0))
+	c3.AddDataPoint(dp(vec(1, 7), 0))
 
 	cm := newCentroidManager(vec(0, 0))
 	cm.Centroids = []common.Centroid{c1, c2, c3}
+	cm.MoveVector() // For auto-adjust vec test.
 
 	cm.MergeCentroids(func(c common.Centroid) bool {
 		// Merge condition for c3. So the nearest, c1, should
@@ -658,4 +703,10 @@ func TestMergeCentroids(t *testing.T) {
 		t.Fatalf("c3 didn't get merged into c1")
 	}
 
+	// Auto-adjust vec test.
+	vecBkp := vec(cm.vec...)
+	cm.MoveVector()
+	if !vecEq(vecBkp, cm.vec) {
+		t.Fatalf("auto-adjusted cm vec is incorrect. want %v, have %v", cm.vec, vecBkp)
+	}
 }

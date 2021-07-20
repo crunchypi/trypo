@@ -175,6 +175,37 @@ func (cm *CentroidManager) splitCentroid(atIndex, trimN int) (common.Centroid, b
 	return newCentroid, true
 }
 
+// prepVecUpdate prepares a task for updating the internal cm.vec. It takes
+// an 'old' vector, and returns a func which accepts a 'new' vector. When
+// calling that func, the internal cm.vec will update cm.vec such that
+// the 'old' vector is replaced with the 'new' vector internally. An
+// example to clarity:
+//	A method of CentroidManager wants to change a centroid in cm.Centroids
+//	such that it's internal vector is changed (by removing dps, for example).
+//	cm.vec (which represents the mean of all centroids in
+//  cm.Centroids, or their vecs, to be specific) will now be inaccurate
+//	and an option is to call CentroidManager.MoveVector(). That is expensive,
+//	as it is O(n) ish, where n is len(cm.Centroids) and calling it every time
+//	something changes is bad. Instead, one can use this method like this:
+//
+//	centroidToChange := ...
+//	prepUpdate := prepVecUpdate(centroidToChange.Vec())
+//	... do something to centroidToChange that changes it's vec.
+//	prepUpdate(centroidToChange.Vec())
+//
+// Note, this does not support deleting centroids.
+func (cm *CentroidManager) prepVecUpdate(v1 []float64) func([]float64) {
+	oldVec := make([]float64, (len(v1)))
+	copy(oldVec, v1)
+	return func(v2 []float64) {
+		cmLen := float64(len(cm.Centroids))
+		cm.vec = mathutils.VecMulScalar(cm.vec, cmLen)
+		cm.vec, _ = mathutils.VecSub(cm.vec, oldVec)
+		cm.vec, _ = mathutils.VecAdd(cm.vec, v2)
+		cm.vec = mathutils.VecDivScalar(cm.vec, cmLen)
+	}
+}
+
 // Vec exposes the internal vector of a CentroidManager.
 func (km *CentroidManager) Vec() []float64 { return km.vec }
 
@@ -187,7 +218,7 @@ func (km *CentroidManager) Vec() []float64 { return km.vec }
 // - Implementation issue of the aforementioned search func.
 // - Vector of dp doesn't match any internal Centroid vec (unequal dimension).
 // Note, this method auto-handles expired auto-splitting of internal
-// Centroid slice.
+// Centroid slice, as well as auto-updating the internal vec of CentroidManager.
 func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 	if dp.Expired() {
 		return false
@@ -209,17 +240,14 @@ func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 	}
 
 	// Try add to nearest centroid.
-	centroid := cm.Centroids[indexes[0]] // Abbreviation.
-	centroidOldVec := centroid.Vec()     // for next block.
+	centroid := cm.Centroids[indexes[0]]          // Abbreviation.
+	updateVec := cm.prepVecUpdate(centroid.Vec()) // Track old vec.
 	if !centroid.AddDataPoint(dp) {
 		return false
 	}
 
-	// Adjust cm.vec
-	cm.vec = mathutils.VecMulScalar(cm.vec, float64(len(cm.Centroids)))
-	cm.vec, _ = mathutils.VecSub(cm.vec, centroidOldVec)
-	cm.vec, _ = mathutils.VecAdd(cm.vec, centroid.Vec())
-	cm.vec = mathutils.VecDivScalar(cm.vec, float64(len(cm.Centroids)))
+	// Adjust cm.vec.
+	updateVec(centroid.Vec())
 
 	// Potential centroid split.
 	if centroid.LenDP() >= cm.centroidDPThreshold {
@@ -237,11 +265,17 @@ func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 // when using NewCentroidManager(...)) implement the method with the same name.
 // The draining load will be as uniform/even as possible amongst the internal
 // centroids, i.e if n=2 and there are 2 centroids with at least 1 dp each, then
-// both of them will drain 1 dp.
+// both of them will drain 1 dp. Note, will update CentroidManager vector.
 func (cm *CentroidManager) DrainUnordered(n int) []common.DataPoint {
 	res := make([]common.DataPoint, 0, n)
 	for centroidIndex, portion := range cm.centroidDataPointPortions(n) {
-		res = append(res, cm.Centroids[centroidIndex].DrainUnordered(portion)...)
+		centroid := cm.Centroids[centroidIndex]
+		// Prep for internal vec update.
+		updateVec := cm.prepVecUpdate(centroid.Vec())
+		res = append(res, centroid.DrainUnordered(portion)...)
+		// Finalize internal vec update.
+		updateVec(centroid.Vec())
+
 	}
 	return res
 }
@@ -251,11 +285,17 @@ func (cm *CentroidManager) DrainUnordered(n int) []common.DataPoint {
 // when using NewCentroidManagerArgs for NewCentroidManager(...)) implement
 // the method with the same name. The draining load will be as uniform/even as
 // possible amongst the internal centroids, i.e if n=2 and there are 2 centroids
-// with at least 1 dp each, then both of them will drain 1 dp.
+// with at least 1 dp each, then both of them will drain 1 dp. Note, will
+// update CentroidManager vector.
 func (cm *CentroidManager) DrainOrdered(n int) []common.DataPoint {
 	res := make([]common.DataPoint, 0, n)
 	for centroidIndex, portion := range cm.centroidDataPointPortions(n) {
-		res = append(res, cm.Centroids[centroidIndex].DrainOrdered(portion)...)
+		centroid := cm.Centroids[centroidIndex]
+		// Prep for internal vec update.
+		updateVec := cm.prepVecUpdate(centroid.Vec())
+		res = append(res, centroid.DrainOrdered(portion)...)
+		// Finalize internal vec update.
+		updateVec(centroid.Vec())
 	}
 	return res
 }
@@ -265,9 +305,14 @@ func (cm *CentroidManager) DrainOrdered(n int) []common.DataPoint {
 // behavior depends on the implementation of Centroids returned with the
 // func specified when creating this CentroidManager instance (see
 // NewCentroidManagerArgs.CentroidFactoryFunc).
+// Note, will update CentroidManager vector.
 func (cm *CentroidManager) Expire() {
 	for _, centroid := range cm.Centroids {
+		// Prep for internal vec update.
+		updateVec := cm.prepVecUpdate(centroid.Vec())
 		centroid.Expire()
+		// Finalize internal vec update.
+		updateVec(centroid.Vec())
 	}
 }
 
@@ -286,13 +331,26 @@ func (cm *CentroidManager) LenDP() int {
 }
 
 // MemTrim resets the internal Centroid slice where empty Centroids are
-// not included (so cap=len).
+// not included (so cap=len). Note, will update CentroidManager vector.
 func (cm *CentroidManager) MemTrim() {
 	centroids := make([]common.Centroid, 0, len(cm.Centroids))
 	for _, centroid := range cm.Centroids {
+		// Prep for internal vec update.
+		updateVec := cm.prepVecUpdate(centroid.Vec())
 		centroid.MemTrim()
+		// Finalize internal vec update.
+		updateVec(centroid.Vec())
 		if centroid.LenDP() != 0 {
 			centroids = append(centroids, centroid)
+		}
+
+		// Will not be included in new centroids slice, so effectively deleted.
+		// In this case, the internal vec must be updated a bit differently
+		// than what cm.prepVecUpdate does. Note bounds check.
+		if centroid.LenDP() == 1 && len(cm.Centroids) > 1 {
+			cm.vec = mathutils.VecMulScalar(cm.vec, float64(len(cm.Centroids)))
+			cm.vec, _ = mathutils.VecSub(cm.vec, centroid.Vec())
+			cm.vec = mathutils.VecDivScalar(cm.vec, float64(len(cm.Centroids)-1))
 		}
 	}
 	cm.Centroids = centroids
@@ -321,7 +379,7 @@ func (cm *CentroidManager) MoveVector() bool {
 // both of them will give away 1 dp each). Finally, receivers=nil will change
 // the behavior of this func such that all internal Centroids are receivers.
 // This should in practice distribute datapoints amongst best-fit internal
-// Centroids.
+// Centroids. Note, will update internal CentroidManager vector.
 func (cm *CentroidManager) DistributeDataPoints(n int, receivers dpReceivers) {
 	// use km.Centroids if recievers is not set.
 	if receivers == nil {
@@ -333,6 +391,10 @@ func (cm *CentroidManager) DistributeDataPoints(n int, receivers dpReceivers) {
 	for centroidIndex, portion := range cm.centroidDataPointPortions(n) {
 		cm.Centroids[centroidIndex].DistributeDataPoints(portion, receivers)
 	}
+	// Done in bulk here, as opposed to using cm.prepVecUpdate, because
+	// it's uncertain which receiver(s) will be picked when calling
+	// Centroid.DistributeDataPoints,
+	cm.MoveVector()
 }
 
 // KNNLookup should find 'k' datapoints that are 'nearest' the 'vec' arg and
@@ -343,18 +405,25 @@ func (cm *CentroidManager) DistributeDataPoints(n int, receivers dpReceivers) {
 // with the same name (KNNLookup) will be called on those Centroids (that
 // behavor depends on how Centroids are created with the CentroidFactoryFunc
 // func, specified when using NewCentroidManagerArgs for NewCentroidManager()).
+// Note, will update internal CentroidManager vector.
 func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.DataPoint {
 	res := make([]common.DataPoint, 0, k)
 
 	gen := cm.centroidVecGenerator() // Brevity.
 	for _, centroidIndex := range cm.knnSearchFunc(vec, gen, k) {
 		centroid := cm.Centroids[centroidIndex]
+		// Prep for internal vec update.
+		updateVec := cm.prepVecUpdate(centroid.Vec())
 		for _, dp := range centroid.KNNLookup(vec, k-len(res), drain) {
 			if len(res) >= k {
+				// Early finalizing of internal vec update.
+				updateVec(centroid.Vec())
 				return res
 			}
 			res = append(res, dp)
 		}
+		// Finalize internal vec update.
+		updateVec(centroid.Vec())
 	}
 	return res
 }
@@ -363,7 +432,9 @@ func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.
 // vec; returns false if there are no internal Centroids, or if none of them
 // have a matching vector (different vector dim). 'nearest' will depend on how
 // the CentroidManager search func works (specified as KNNSearchFunc field in
-// NewCentroidManagerArgs when using NewCentroidManager(...)).
+// NewCentroidManagerArgs when using NewCentroidManager(...)). NOTE; if the
+// internal datapoint state of the returned centroid is changed, do a call
+// to CentroidManager.MoveVector() to update the internal vec.
 func (cm *CentroidManager) NearestCentroid(vec []float64) (common.Centroid, bool) {
 	indexes := cm.knnSearchFunc(vec, cm.centroidVecGenerator(), 1)
 	if len(indexes) == 0 {
@@ -401,17 +472,18 @@ func (cm *CentroidManager) SplitCentroids(split func(common.Centroid) bool) {
 // as KNNSearchFunc field in NewCentroidManagerArgs when using NewCentroidManager()).
 // Example 1:
 //	merge := func(c common.Centroid) { return true }
-// ... will merge all centroids together.
-// Example 2:
+//	... will merge all centroids together.
+//	Example 2:
 //	merge := func(c common.Centroid) { return c.LenDP() < 10 }
-// ... will find all centroids that have less than 10 dps, then merge them
-// into their _nearest_ other centroids until they have at least 10 dps.
+//	... will find all centroids that have less than 10 dps, then merge them
+//	into their _nearest_ other centroids until they have at least 10 dps.
+//
+// Note, will update internal CentroidManager vector.
 func (cm *CentroidManager) MergeCentroids(merge func(common.Centroid) bool) {
 	// When two centroids are merged, one of them will be marked for deletion
 	// here, to prevent duplication of internal data. Keys=cm.Centroids indexes.
 	delMarks := make(map[int]bool, len(cm.Centroids))
 	for i, candidate := range cm.Centroids {
-
 		if !merge(candidate) || delMarks[i] {
 			continue
 		}
@@ -420,29 +492,43 @@ func (cm *CentroidManager) MergeCentroids(merge func(common.Centroid) bool) {
 		gen := cm.centroidVecGenerator()
 		k := len(cm.Centroids)
 
+		// Prep for internal vec update for 'candidate' centroid.
+		updateVecCandidate := cm.prepVecUpdate(vec)
+
+		// Merge nearest centroids into 'candidate' until merge()=true.
 		for _, centroidIndex := range cm.knnSearchFunc(vec, gen, k) {
-			// Guard identity merge + use of centroids marked for deletion.
+			// Guard identity or double merge.
 			if centroidIndex == i || delMarks[centroidIndex] {
 				continue
 			}
-			// Merge other into candidate.
+			// Merge other _completely_ into candidate.
+			delMarks[centroidIndex] = true
 			other := cm.Centroids[centroidIndex]
 			for _, dp := range other.DrainUnordered(other.LenDP()) {
 				candidate.AddDataPoint(dp)
 			}
-			// Mark other for deletion, it's merged into candidate.
-			delMarks[centroidIndex] = true
-
 			if !merge(candidate) { // Check if satisfied.
 				break
 			}
 		}
+		// Finalize internal vec update for 'candidate' centroid.
+		updateVecCandidate(candidate.Vec())
 	}
 	// Filter out centroids marked for deletion from cm.Centroids.
 	// Note, the reason for backwards looping is to prevent index
 	// shifting issues.
 	for i := len(cm.Centroids) - 1; i > -1; i-- {
 		if delMarks[i] {
+			// This should always be true, due to how this func works at the
+			// time of writing, but doing a bounds check juuust in case:
+			if len(cm.Centroids) > 0 {
+				// Need this, it changes the internal vector appropriately
+				// when deleting a centroid:
+				cm.vec = mathutils.VecMulScalar(cm.vec, float64(len(cm.Centroids)))
+				cm.vec, _ = mathutils.VecSub(cm.vec, cm.Centroids[i].Vec())
+				cm.vec = mathutils.VecDivScalar(cm.vec, float64(len(cm.Centroids)-1))
+			}
+			// Delete.
 			cm.Centroids = append(cm.Centroids[:i], cm.Centroids[i+1:]...)
 		}
 	}
