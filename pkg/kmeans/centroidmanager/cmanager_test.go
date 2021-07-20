@@ -611,6 +611,49 @@ func TestDistributeDataPointsNil(t *testing.T) {
 	}
 }
 
+func TestKNNLookupNoDrain(t *testing.T) {
+	if !t.Run("Test Dependency 1", TestMoveVector) {
+		t.Fatalf("Expected TestMoveVector to work, it did not.")
+	}
+
+	c1 := newCentroid(vec(1, 1))
+	c1.AddDataPoint(dp(vec(1, 2), 0)) // dp1.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp2.
+
+	c2 := newCentroid(vec(1, 5))
+	c2.AddDataPoint(dp(vec(1, 6), 0)) // dp3.
+	c2.AddDataPoint(dp(vec(1, 7), 0)) // dp4
+
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []common.Centroid{c1, c2}
+	cm.MoveVector() // For auto-adjusting vec test.
+
+	// vec(1, 5.7) is closest to dp3 in c2.
+	dps := cm.KNNLookup(vec(1, 5.7), 1, true)
+
+	if c1.LenDP() != 2 {
+		t.Fatalf("unexpected dp drain in c1: len=%v", c1.LenDP())
+	}
+
+	if c2.LenDP() != 1 {
+		t.Fatalf("unexpected dp drain in c2: len=%v", c2.LenDP())
+	}
+
+	if len(dps) != 1 {
+		t.Fatalf("unexpected result len: %v (want 1)", len(dps))
+	}
+	if !vecEq(dps[0].Vec(), vec(1, 6)) { // vec(1,6)=dp3
+		t.Fatalf("unexpected result vec: %v", dps[0].Vec())
+	}
+
+	// Auto-adjust vec test.
+	vecBkp := vec(cm.vec...)
+	cm.MoveVector()
+	if !vecEq(vecBkp, cm.vec) {
+		t.Fatalf("auto-adjusted cm vec is incorrect. want %v, have %v", cm.vec, vecBkp)
+	}
+}
+
 func TestNearestCentroid(t *testing.T) {
 	c1 := newCentroid(vec(1, 2))
 	c2 := newCentroid(vec(1, 3))

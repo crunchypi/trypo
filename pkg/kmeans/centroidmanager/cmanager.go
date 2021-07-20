@@ -411,16 +411,29 @@ func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.
 
 	gen := cm.centroidVecGenerator() // Brevity.
 	for _, centroidIndex := range cm.knnSearchFunc(vec, gen, k) {
+		if len(res) >= k {
+			break
+		}
+
 		centroid := cm.Centroids[centroidIndex]
 		// Prep for internal vec update.
 		updateVec := cm.prepVecUpdate(centroid.Vec())
 		for _, dp := range centroid.KNNLookup(vec, k-len(res), drain) {
-			if len(res) >= k {
-				// Early finalizing of internal vec update.
-				updateVec(centroid.Vec())
-				return res
+			switch {
+			// Keep adding to res until requirement is met.
+			case len(res) < k:
+				res = append(res, dp)
+
+			// Requirement met and drain is on, so the dps iterated over
+			// in this loop have to be added somewhere (back into centroid).
+			case len(res) >= k && drain:
+				centroid.AddDataPoint(dp)
+
+			// Requirement met and drain is off, so no dps will be lost
+			// if a break is done here.
+			case len(res) >= k && !drain:
+				break
 			}
-			res = append(res, dp)
 		}
 		// Finalize internal vec update.
 		updateVec(centroid.Vec())
