@@ -6,6 +6,7 @@ import (
 	"time"
 	"trypo/pkg/kmeans/centroid"
 	"trypo/pkg/kmeans/common"
+	"trypo/pkg/mathutils"
 	"trypo/pkg/searchutils"
 )
 
@@ -60,6 +61,21 @@ func init() {
 
 }
 
+/*
+--------------------------------------------------------------------------------
+Section for utils.
+--------------------------------------------------------------------------------
+*/
+
+// Tweak how long a 'time unit' is (used for timeouts). It
+// standardises sleep time for these tests.
+var _SLEEPUNIT = time.Millisecond * 10
+
+// Vec tools aliases.
+var vec = mathutils.Vec     // Create new vec.
+var vecEq = mathutils.VecEq // compare two vecs.
+var vecIn = mathutils.VecIn // Check if []vec contains vec.
+
 type datapoint struct {
 	vec           []float64
 	payload       []byte
@@ -75,49 +91,6 @@ func (dp *datapoint) Expired() bool {
 	return dp.expireEnabled && time.Now().After(dp.expires)
 }
 
-// Tweak how long a 'time unit' is (used for timeouts). It
-// standardises sleep time for these tests.
-var _SLEEPUNIT = time.Millisecond * 10
-
-// Helper for creating a vector, a lot nicer to write vec(1,2,3)
-// instead of []float64{1,2,3}.
-func vec(v ...float64) []float64 {
-	_vec := make([]float64, len(v))
-	for i, x := range v {
-		_vec[i] = x
-	}
-	return _vec
-}
-
-func vecEq(v1, v2 []float64) bool {
-	if len(v1) != len(v2) {
-		return false
-	}
-	for i := 0; i < len(v1); i++ {
-		if v1[i] != v2[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func dps2Vecs(dps []common.DataPoint) [][]float64 {
-	res := make([][]float64, len(dps))
-	for i, dp := range dps {
-		res[i] = dp.Vec()
-	}
-	return res
-}
-
-func containsVec(vec []float64, vecs [][]float64) bool {
-	for _, other := range vecs {
-		if vecEq(vec, other) {
-			return true
-		}
-	}
-	return false
-}
-
 // helper for creating a data point.
 func dp(v []float64, sleepUnits int) *datapoint {
 	_dp := datapoint{vec: v}
@@ -127,6 +100,14 @@ func dp(v []float64, sleepUnits int) *datapoint {
 		_dp.expireEnabled = true
 	}
 	return &_dp
+}
+
+func dps2Vecs(dps []common.DataPoint) [][]float64 {
+	res := make([][]float64, len(dps))
+	for i, dp := range dps {
+		res[i] = dp.Vec()
+	}
+	return res
 }
 
 func newCentroid(vec []float64) common.Centroid {
@@ -161,6 +142,12 @@ func newCentroidManager(vec []float64) *CentroidManager {
 func sleep() {
 	time.Sleep(_SLEEPUNIT)
 }
+
+/*
+--------------------------------------------------------------------------------
+Proper test section.
+--------------------------------------------------------------------------------
+*/
 
 func TestCentroidDataPointPortions(t *testing.T) {
 	cm := newCentroidManager(vec(0))
@@ -197,14 +184,14 @@ func TestCentroidVecGenerator(t *testing.T) {
 
 	gen := cm.centroidVecGenerator()
 
-	vec, cont := gen()
-	if vec[0] != 1 {
-		t.Fatalf("incorrect first vector: %v", vec)
+	v, cont := gen()
+	if !vecEq(v, c1.Vec()) {
+		t.Fatalf("incorrect first vector: %v", v)
 	}
 
-	vec, cont = gen()
-	if vec[0] != 2 {
-		t.Fatalf("incorrect first vector: %v", vec)
+	v, cont = gen()
+	if !vecEq(v, c2.Vec()) {
+		t.Fatalf("incorrect first vector: %v", v)
 	}
 
 	_, cont = gen()
@@ -382,10 +369,10 @@ func TestDrainOrdered(t *testing.T) {
 	if !t.Run("Test Dependency 1", TestMoveVector) {
 		t.Fatalf("Expected TestMoveVector to work, it did not.")
 	}
-	cm := newCentroidManager(vec(0))
+	cm := newCentroidManager(vec(1, 1))
 
-	c1 := newCentroid(vec(0, 0))
-	c2 := newCentroid(vec(0, 0))
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(vec(1, 1))
 
 	// This setup might look a bit weird, since c1 adds 3 dps
 	// with the same vector first. This tests assumes that
@@ -393,15 +380,22 @@ func TestDrainOrdered(t *testing.T) {
 	// moment of writing) updates the internal vector on each add.
 	// vec(1,3) is added three times just to make sure that vec(1,9)
 	// is definitively furthest away from the mean.
-	c1.AddDataPoint(dp(vec(1, 3), 0)) // Should _not_ be drained.
-	c1.AddDataPoint(dp(vec(1, 3), 0)) // Should _not_ be drained.
-	c1.AddDataPoint(dp(vec(1, 3), 0)) // Should _not_ be drained.
-	c1.AddDataPoint(dp(vec(1, 9), 0)) // Should be drained.
-	c2.AddDataPoint(dp(vec(5, 5), 0)) // Should be drained as well.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp1, Should _not_ be drained.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp2, Should _not_ be drained.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp3, Should _not_ be drained.
+	c1.AddDataPoint(dp(vec(1, 9), 0)) // dp4, Should be drained.
+	c2.AddDataPoint(dp(vec(5, 5), 0)) // dp5, Should be drained as well.
 
 	cm.Centroids = []common.Centroid{c1, c2}
 	cm.MoveVector() // For auto-adjusting vec test.
 
+	// The drain method tries to drain a uniform amount of dps from
+	// each centroid, and that should be 1 each since:
+	//	(1) Both centroids have at least 1 dp.
+	//	(2) The km.DrainOrdered call below has 2 as input.
+	// So dp5 should be drained, as it is the only dp in c2, while
+	// dp4 should be drained from c1, given that it is 'furthest'
+	// away from the c1 vec (furthest in a cosine similarity sense).
 	dps := cm.DrainOrdered(2)
 	if len(dps) != 2 {
 		t.Fatal("incorrect drain amt:", len(dps))
@@ -412,19 +406,11 @@ func TestDrainOrdered(t *testing.T) {
 	if cm.Centroids[1].LenDP() != 0 {
 		t.Fatal("remainder of dps in centroid 2 is incorrect:", c2.LenDP())
 	}
-	/*
-		 The drain method tries to drain a uniform amount of datapoints from
-		 each centroid, and that should be 1 each since:
-				(1) Both centroids have at least 1 dp.
-				(2) The km.DrainOrdered call above has 2 as input.
-
-		But simply checking 'if dps[0].Vec[1] == 9' isn't enough
-		because the map created in km.DrainOrdered is funnily not
-		deterministic, even with a deterministic test...
-		Hence the _and_ clause.
-	*/
-	if dps[0].Vec()[1] != 9 && dps[1].Vec()[1] != 9 {
-		t.Fatal("didn't drain dp furthest from vec. dps:", dps)
+	if !vecIn(vec(1, 9), dps2Vecs(dps)) {
+		t.Fatal("didn't drain dp4 from c1:")
+	}
+	if !vecIn(vec(5, 5), dps2Vecs(dps)) {
+		t.Fatal("didn't drain dp5 from c2:")
 	}
 
 	// Auto-adjust vec test.
@@ -497,13 +483,13 @@ func TestMoveVector(t *testing.T) {
 	// Mean of dp1&dp2 = {2,2}
 	// Mean of dp3&dp4 = {4,4}
 	// Mean of c1&c2 = {3,3}
-	if cm.Centroids[0].Vec()[0] != 2 {
+	if !vecEq(cm.Centroids[0].Vec(), vec(2, 2)) {
 		t.Fatal("incorrect vec in c1: ", cm.Centroids[0].Vec())
 	}
-	if cm.Centroids[1].Vec()[0] != 4 {
+	if !vecEq(cm.Centroids[1].Vec(), vec(4, 4)) {
 		t.Fatal("incorrect vec in c2: ", cm.Centroids[0].Vec())
 	}
-	if cm.Vec()[0] != 3 {
+	if !vecEq(cm.Vec(), vec(3, 3)) {
 		t.Fatal("incorrect vec in cm:", cm.Vec())
 	}
 }
@@ -558,12 +544,12 @@ func TestDistributeDataPoints(t *testing.T) {
 		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
 	}
 	// Confirm that dp4 is no longer in c1 (moved to c2).
-	if containsVec(vec(1, 9), dps2Vecs(c1dps)) {
+	if vecIn(vec(1, 9), dps2Vecs(c1dps)) {
 		t.Fatalf("c1dps still contains vec with bad fit.")
 	}
 
 	// Confirm that dp8 is no longer in c2 (moved to c1).
-	if containsVec(vec(1, 3), dps2Vecs(c2dps)) {
+	if vecIn(vec(1, 3), dps2Vecs(c2dps)) {
 		t.Fatalf("c1dps still contains vec with bad fit.")
 	}
 }
@@ -615,12 +601,12 @@ func TestDistributeDataPointsNil(t *testing.T) {
 		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
 	}
 	// Confirm that dp4 is no longer in c1 (moved to c2).
-	if containsVec(vec(1, 9), dps2Vecs(c1dps)) {
+	if vecIn(vec(1, 9), dps2Vecs(c1dps)) {
 		t.Fatalf("c1dps still contains vec with bad fit.")
 	}
 
 	// Confirm that dp8 is no longer in c2 (moved to c1).
-	if containsVec(vec(1, 3), dps2Vecs(c2dps)) {
+	if vecIn(vec(1, 3), dps2Vecs(c2dps)) {
 		t.Fatalf("c1dps still contains vec with bad fit.")
 	}
 }
@@ -633,11 +619,11 @@ func TestNearestCentroid(t *testing.T) {
 	cm := newCentroidManager(vec(0, 0))
 	cm.Centroids = []common.Centroid{c1, c2, c3}
 
-	c, ok := cm.NearestCentroid(vec(1, 5))
+	c, ok := cm.NearestCentroid(vec(1, 5)) // nearest c3.
 	if !ok {
 		t.Fatal("didn't get any centroid")
 	}
-	if c.Vec()[1] != c3.Vec()[1] {
+	if !vecEq(c.Vec(), c3.Vec()) {
 		t.Fatalf("incorrect centroid with vec %v", c.Vec())
 	}
 }
