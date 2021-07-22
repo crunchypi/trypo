@@ -554,14 +554,7 @@ func TestDistributeDataPoints(t *testing.T) {
 	}
 }
 
-// Very similar to TestDistributeDataPoints; that test handles centroids
-// that can be external to a CentroidManager. Another functionality of
-// CentroidManager.DistributeDataPoints is that it acts differently when
-// it gets a nil for the receivers arg -- then, all datapoints are
-// distributed internally to their best centroid.
-// Note, setup (creating centroids + inserting datapoints) and validation
-// (all the if statements) are exactly the same.
-func TestDistributeDataPointsNil(t *testing.T) {
+func TestDistributeDataPointsInternal(t *testing.T) {
 	// The centroid and datapoint setup below is set up such that
 	// dp4 is in c1 but is actually closer to c2. Likewise, dp8
 	// is in c2 but is closer to c1.
@@ -589,7 +582,7 @@ func TestDistributeDataPointsNil(t *testing.T) {
 	cm.Centroids = []common.Centroid{c1, c2}
 
 	// This should move dps as specified above.
-	cm.DistributeDataPoints(2, nil)
+	cm.DistributeDataPointsInternal(2)
 
 	c1dps := c1.DrainUnordered(9) // Convenience
 	c2dps := c2.DrainUnordered(9) // Convenience
@@ -662,10 +655,17 @@ func TestNearestCentroid(t *testing.T) {
 	cm := newCentroidManager(vec(0, 0))
 	cm.Centroids = []common.Centroid{c1, c2, c3}
 
-	c, ok := cm.NearestCentroid(vec(1, 5)) // nearest c3.
+	centroids, ok := cm.NearestCentroids(vec(1, 5), 1, true) // nearest c3.
 	if !ok {
 		t.Fatal("didn't get any centroid")
 	}
+	if len(centroids) != 1 {
+		t.Fatalf("got incorrect amt of centroids: %v", len(centroids))
+	}
+	if len(cm.Centroids) != 2 {
+		t.Fatalf("incorrect cm centroids remainder: %v", len(cm.Centroids))
+	}
+	c := centroids[0]
 	if !vecEq(c.Vec(), c3.Vec()) {
 		t.Fatalf("incorrect centroid with vec %v", c.Vec())
 	}

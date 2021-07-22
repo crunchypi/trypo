@@ -7,12 +7,13 @@ groups of centroids.
 package centoidmanager
 
 import (
+	"sort"
 	"trypo/pkg/kmeans/common"
 	"trypo/pkg/mathutils"
 )
 
 // Interface hint:
-var _ common.Centroid = new(CentroidManager)
+var _ common.CentroidManager = new(CentroidManager)
 
 // Abbreviation.
 type dpReceivers = []common.DataPointReceiver
@@ -376,18 +377,13 @@ func (cm *CentroidManager) MoveVector() bool {
 // NewCentroidManager(...)) imlement the method with the same name. Additionally,
 // 'n' will be divided as evenly/uniformly as possible amongst the internal
 // Centroids (so if n=2 and there are 2 centroids with at least 1 dp each, then
-// both of them will give away 1 dp each). Finally, receivers=nil will change
-// the behavior of this func such that all internal Centroids are receivers.
-// This should in practice distribute datapoints amongst best-fit internal
-// Centroids. Note, will update internal CentroidManager vector.
+// both of them will give away 1 dp each). Note; updates internal
+// CentroidManager vector, and will abort silently if 'receivers' is nil or empty.
 func (cm *CentroidManager) DistributeDataPoints(n int, receivers dpReceivers) {
-	// use km.Centroids if recievers is not set.
-	if receivers == nil {
-		receivers = make([]common.DataPointReceiver, len(cm.Centroids))
-		for i, centroid := range cm.Centroids {
-			receivers[i] = centroid
-		}
+	if receivers == nil || len(receivers) == 0 {
+		return
 	}
+
 	for centroidIndex, portion := range cm.centroidDataPointPortions(n) {
 		cm.Centroids[centroidIndex].DistributeDataPoints(portion, receivers)
 	}
@@ -395,6 +391,17 @@ func (cm *CentroidManager) DistributeDataPoints(n int, receivers dpReceivers) {
 	// it's uncertain which receiver(s) will be picked when calling
 	// Centroid.DistributeDataPoints,
 	cm.MoveVector()
+}
+
+// DistributeDataPoints uses internal Centroids as receivers to
+// CentroidManager.DistributeDataPoints. This should in practice distribute
+// n datapoints amongst the best-fit internal Centroids.
+func (cm *CentroidManager) DistributeDataPointsInternal(n int) {
+	receivers := make([]common.DataPointReceiver, len(cm.Centroids))
+	for i, centroid := range cm.Centroids {
+		receivers[i] = centroid
+	}
+	cm.DistributeDataPoints(n, receivers)
 }
 
 // KNNLookup should find 'k' datapoints that are 'nearest' the 'vec' arg and
@@ -441,19 +448,41 @@ func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.
 	return res
 }
 
-// NearestCentroid attempts to find a Centroid that is 'nearest' the specified
-// vec; returns false if there are no internal Centroids, or if none of them
+// NearestCentroids attempts to find n Centroids that are 'nearest' the specified
+// vec; returns false if there are not intenal Centroids, or if none of them
 // have a matching vector (different vector dim). 'nearest' will depend on how
 // the CentroidManager search func works (specified as KNNSearchFunc field in
-// NewCentroidManagerArgs when using NewCentroidManager(...)). NOTE; if the
-// internal datapoint state of the returned centroid is changed, do a call
-// to CentroidManager.MoveVector() to update the internal vec.
-func (cm *CentroidManager) NearestCentroid(vec []float64) (common.Centroid, bool) {
-	indexes := cm.knnSearchFunc(vec, cm.centroidVecGenerator(), 1)
+// NewCentroidManagerArgs when using NewCentroidManager(...)). If drain=true,
+// then the returned centroid(s) are removed from this CentroidManager instance
+// and the internal vector is automatically adjusted.  NOTE; if drain=false
+// and the datapoint state of the returned Centroid(s) are/is changed, do a
+// call to CentroidManager.MoveVector() to update the internal vec.
+func (cm *CentroidManager) NearestCentroids(vec []float64, n int, drain bool) (
+	[]common.Centroid, bool,
+) {
+	indexes := cm.knnSearchFunc(vec, cm.centroidVecGenerator(), n)
 	if len(indexes) == 0 {
 		return nil, false
 	}
-	return cm.Centroids[indexes[0]], true
+	centroids := make([]common.Centroid, 0, n)
+	for _, index := range indexes {
+		centroids = append(centroids, cm.Centroids[index])
+	}
+	if drain {
+		sort.Ints(indexes)
+		for i := len(indexes) - 1; i > -1; i-- {
+			j := indexes[i] // Abbreviation for actual centroid index.
+			// Auto-adjust internal vec.
+			if len(cm.Centroids) > 0 {
+				cm.vec = mathutils.VecMulScalar(cm.vec, float64(len(cm.Centroids)))
+				cm.vec, _ = mathutils.VecSub(cm.vec, cm.Centroids[j].Vec())
+				cm.vec = mathutils.VecDivScalar(cm.vec, float64(len(cm.Centroids)-1))
+			}
+			// Delete.
+			cm.Centroids = append(cm.Centroids[:j], cm.Centroids[j+1:]...)
+		}
+	}
+	return centroids, true
 }
 
 // SplitCentroids iterates through all internal Centroids and passes them to

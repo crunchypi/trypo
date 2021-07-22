@@ -92,3 +92,14 @@ type Centroid interface {
 	KNNSearcher
 	LenDP() int
 }
+
+// CentroidManager is a composite interface which is intended to keep/manage
+// multiple concrete Centroid types. It breaks the naming convention for
+// calarity reasons.
+type CentroidManager interface {
+	Centroid
+	NearestCentroids(vec []float64, n int, drain bool) ([]Centroid, bool)
+	SplitCentroids(split func(Centroid) bool)
+	MergeCentroids(merge func(Centroid) bool)
+	DangerExposeCentroidSlice() []Centroid
+}
