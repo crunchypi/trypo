@@ -4,7 +4,7 @@ intended to manage common.Centroid; it could be thought of as a 'KMeans'
 type, though that naming can mislead the intent, which is simply to manage
 groups of centroids.
 */
-package centoidmanager
+package centroidmanager
 
 import (
 	"sort"

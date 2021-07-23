@@ -1,4 +1,4 @@
-package centoidmanager
+package centroidmanager
 
 import (
 	"encoding/json"
