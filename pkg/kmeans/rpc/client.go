@@ -73,3 +73,47 @@ func (c *kmeansClient) DrainOrdered(n int) []DataPoint {
 
 	return resp
 }
+
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client.
+func (c *kmeansClient) Expire() {
+	c.client(func(rc *rpc.Client) {
+		*c.err = rc.Call("KMeansServer.Expire", c.namespace, nil)
+	})
+}
+
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client.
+func (c *kmeansClient) LenDP() int {
+	var resp int
+
+	c.client(func(rc *rpc.Client) {
+		*c.err = rc.Call("KMeansServer.LenDP", c.namespace, &resp)
+	})
+
+	return resp
+}
+
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client.
+func (c *kmeansClient) MemTrim() {
+	c.client(func(rc *rpc.Client) {
+		*c.err = rc.Call("KMeansServer.MemTrim", c.namespace, nil)
+	})
+}
+
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client.
+func (c *kmeansClient) MoveVector() bool {
+	var resp bool
+
+	c.client(func(rc *rpc.Client) {
+		*c.err = rc.Call("KMeansServer.MoveVector", c.namespace, &resp)
+	})
+
+	return resp
+}

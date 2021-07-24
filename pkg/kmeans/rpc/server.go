@@ -63,3 +63,43 @@ func (s *KMeansServer) DrainOrdered(args DrainArgs, resp *[]DataPoint) error {
 		return cm.DrainOrdered(args.N)
 	})
 }
+
+func (s *KMeansServer) Expire(namespace string, _ *int) error {
+	lookupOK := s.Table.Access(namespace, func(cm *CentroidManager) {
+		cm.Expire()
+	})
+	if !lookupOK {
+		return NamespaceErr{namespace}
+	}
+	return nil
+}
+
+func (s *KMeansServer) LenDP(namespace string, resp *int) error {
+	lookupOK := s.Table.Access(namespace, func(cm *CentroidManager) {
+		*resp = cm.LenDP()
+	})
+	if !lookupOK {
+		return NamespaceErr{namespace}
+	}
+	return nil
+}
+
+func (s *KMeansServer) MemTrim(namespace string, _ *int) error {
+	lookupOK := s.Table.Access(namespace, func(cm *CentroidManager) {
+		cm.MemTrim()
+	})
+	if !lookupOK {
+		return NamespaceErr{namespace}
+	}
+	return nil
+}
+
+func (s *KMeansServer) MoveVector(namespace string, resp *bool) error {
+	lookupOK := s.Table.Access(namespace, func(cm *CentroidManager) {
+		*resp = cm.MoveVector()
+	})
+	if !lookupOK {
+		return NamespaceErr{namespace}
+	}
+	return nil
+}
