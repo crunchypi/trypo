@@ -17,9 +17,9 @@ func (c *kmeansClient) client(taskF func(*rpc.Client)) {
 	taskF(client)
 }
 
-// Calls the method with the same name on a concrete remote instance of
-// common.CentroidManager, using the addr and namespace specified while
-// setting up this client with KMeansClient(...).
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client.
 func (c *kmeansClient) Vec() []float64 {
 	var resp []float64
 
@@ -30,15 +30,45 @@ func (c *kmeansClient) Vec() []float64 {
 	return resp
 }
 
-// Calls the method with the same name on a concrete remote instance of
-// common.CentroidManager, using the addr and namespace specified while
-// setting up this client with KMeansClient(...).
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client. Note, will
+// create a new CentroidManager instance with the specified namespace if one does
+// not already exist.
 func (c *kmeansClient) AddDataPoint(dp DataPoint) bool {
 	var resp bool
 
 	c.client(func(rc *rpc.Client) {
 		args := AddDataPointArgs{NameSpace: c.namespace, DP: dp}
 		*c.err = rc.Call("KMeansServer.AddDataPoint", args, &resp)
+	})
+
+	return resp
+}
+
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client.
+func (c *kmeansClient) DrainUnordered(n int) []DataPoint {
+	var resp []DataPoint
+
+	c.client(func(rc *rpc.Client) {
+		args := DrainArgs{NameSpace: c.namespace, N: n}
+		*c.err = rc.Call("KMeansServer.DrainUnordered", args, &resp)
+	})
+
+	return resp
+}
+
+// Calls the method with the same name on a remote instance of T CentroidManager
+// (T of pkg/kmeans/centroidmanager, se that method name for more documentation),
+// using the addr and namespace specified while setting up this client.
+func (c *kmeansClient) DrainOrdered(n int) []DataPoint {
+	var resp []DataPoint
+
+	c.client(func(rc *rpc.Client) {
+		args := DrainArgs{NameSpace: c.namespace, N: n}
+		*c.err = rc.Call("KMeansServer.DrainOrdered", args, &resp)
 	})
 
 	return resp

@@ -175,6 +175,12 @@ func (tn *tNetwork) reset() {
 	}
 }
 
+// convenience
+func (tn *tNetwork) unwrap(addr, namespace string) *CentroidManager {
+	node := tn.nodes[addr]
+	return node.Table.slots[namespace].cManager
+}
+
 // One address per node in a tNetwork instance (next var).
 var addrs = []addr{"localhost:3000", "localhost:3001", "localhost:3002"}
 
@@ -236,6 +242,77 @@ func TestAddDataPoint(t *testing.T) {
 
 	if !vecEq(KMeansClient(addr, namespace, nil).Vec(), vec1) {
 		t.Fatalf("remote vector incorrect")
+	}
+}
+
+func TestDrainUnordered(t *testing.T) {
+	if !t.Run("DEPENDENCY 1", TestAddDataPoint) {
+		t.Fatalf("expected TestAddDataPoint to work, it did not")
+	}
+
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+	vec1 := vec(1, 5)
+	vec2 := vec(1, 5)
+
+	// Err ignored becausee that is validated with 'DEPENDENCY 1'
+	KMeansClient(addr, namespace, nil).AddDataPoint(dp(vec1, 0))
+	KMeansClient(addr, namespace, nil).AddDataPoint(dp(vec2, 0))
+
+	var err error
+	dps := KMeansClient(addr, namespace, &err).DrainUnordered(1)
+	if len(dps) != 1 {
+		t.Fatalf("returned dps len unexpected: %v", len(dps))
+	}
+
+	if !vecEq(dps[0].Vec, vec1) {
+		t.Fatalf("unexpected vec of returned dp: want %v, got %v", vec1, vec2)
+	}
+
+	remotedps := network.unwrap(addr, namespace).Centroids[0].DataPoints
+	if len(remotedps) != 1 {
+		t.Fatalf("remote dp remainder incorrect: len=%v", len(remotedps))
+	}
+
+	if !vecEq(dps[0].Vec, vec2) {
+		t.Fatalf("remainding remote dp incorrect: vec=%v", dps[0].Vec)
+	}
+}
+
+func TestDrainOrdered(t *testing.T) {
+	if !t.Run("DEPENDENCY 1", TestAddDataPoint) {
+		t.Fatalf("expected TestAddDataPoint to work, it did not")
+	}
+
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	// Mean of remote CentroidManger should be furthest away from dp1.
+	dp1 := dp(vec(1, 5), 0)
+	dp2 := dp(vec(1, 9), 0)
+	dp3 := dp(vec(1, 9), 0)
+	dp4 := dp(vec(1, 9), 0)
+
+	for _, dp := range []DataPoint{dp1, dp2, dp3, dp4} {
+		// Err ignored becausee that is validated with 'DEPENDENCY 1'
+		KMeansClient(addr, namespace, nil).AddDataPoint(dp)
+	}
+
+	var err error
+	dps := KMeansClient(addr, namespace, &err).DrainUnordered(1)
+	if len(dps) != 1 {
+		t.Fatalf("returned dps len unexpected: %v", len(dps))
+	}
+
+	if !vecEq(dps[0].Vec, dp1.Vec) {
+		t.Fatalf("unexpected vec of returned dp: want %v, got %v", dps[0].Vec, dp1.Vec)
+	}
+
+	remotedps := network.unwrap(addr, namespace).Centroids[0].DataPoints
+	if len(remotedps) != 3 {
+		t.Fatalf("remote dp remainder incorrect: len=%v", len(remotedps))
 	}
 }
 
