@@ -81,17 +81,17 @@ var vecEq = mathutils.VecEq // compare two vecs.
 var vecIn = mathutils.VecIn // Check if []vec contains vec.
 
 // helper for creating a data point.
-func dp(v []float64, sleepUnits int) *DataPoint {
-	_dp := DataPoint{IVec: v}
+func dp(v []float64, sleepUnits int) DataPoint {
+	_dp := common.DataPoint{Vec: v}
 
 	if sleepUnits > 0 {
-		_dp.IExpires = time.Now().Add(_SLEEPUNIT * time.Duration(sleepUnits))
-		_dp.IExpireEnabled = true
+		_dp.Expires = time.Now().Add(_SLEEPUNIT * time.Duration(sleepUnits))
+		_dp.ExpireEnabled = true
 	}
-	return &_dp
+	return _dp
 }
 
-func newCentroid(vec []float64) common.Centroid {
+func newCentroid(vec []float64) *Centroid {
 	args := centroid.NewCentroidArgs{
 		InitVec:       vec,
 		InitCap:       10,
@@ -102,14 +102,13 @@ func newCentroid(vec []float64) common.Centroid {
 	if !ok {
 		panic("couldn't setup Centroid")
 	}
-	return centroid
+	return &centroid
 }
 
-func newCentroidManager(vec []float64) common.CentroidManager {
+func newCentroidManager(vec []float64) *CentroidManager {
 	args := centroidmanager.NewCentroidManagerArgs{
 		InitVec:             vec,
 		InitCap:             0,
-		CentroidFactoryFunc: newCentroid,
 		CentroidDPThreshold: 10,
 		KNNSearchFunc:       _knnSearchFunc,
 		KFNSearchFunc:       _kfnSearchFunc,
@@ -118,7 +117,7 @@ func newCentroidManager(vec []float64) common.CentroidManager {
 	if !ok {
 		panic("couldn't setup CentroidManager for test")
 	}
-	return cm
+	return &cm
 }
 
 func newKMeansServer(addr string) *KMeansServer {
@@ -229,7 +228,7 @@ func TestAddDataPoint(t *testing.T) {
 	// ok bool ignored because there are currently no CentroidManager
 	// instances in any server, and this method adds a new CentroidManager
 	// if no namespaces expist/are valid.
-	KMeansClient(addr, namespace, &err).AddDataPoint(*dp(vec1, 0))
+	KMeansClient(addr, namespace, &err).AddDataPoint(dp(vec1, 0))
 
 	if err != nil {
 		t.Fatalf("client conn (?) err: %v", err)
@@ -240,6 +239,7 @@ func TestAddDataPoint(t *testing.T) {
 	}
 }
 
+// NOTE: Have this at the bottom of this file for cleanup.
 func TestCleanup(t *testing.T) {
 	network.stop()
 }

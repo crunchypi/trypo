@@ -10,8 +10,15 @@ import (
 	"net"
 	"net/rpc"
 	"sync"
+	"trypo/pkg/kmeans/centroid"
+	"trypo/pkg/kmeans/centroidmanager"
 	"trypo/pkg/kmeans/common"
 )
+
+// Abbreviations.
+type DataPoint = common.DataPoint
+type Centroid = centroid.Centroid
+type CentroidManager = centroidmanager.CentroidManager
 
 // NamespaceErr is a common error that might occur while doing remote call
 // through kmeansClient (defined in this pkg). A KMeansServer can hold multiple
@@ -66,14 +73,14 @@ Lock slot -> do op -> unlock slot.
 // CManagerSlot keeps a concrete common.CentroidManager instance.
 // Safe concurrency usage done with CManagerSlot.Access.
 type CManagerSlot struct {
-	cManager common.CentroidManager
+	cManager *CentroidManager
 	sync.Mutex
 }
 
 // Access does a concurrency safe operation on the internal common.CentroidManager
 // data. Example:
 //	x.Access(func(c common.CentroidManager) { c.Vec() } )
-func (s *CManagerSlot) Access(f func(common.CentroidManager)) {
+func (s *CManagerSlot) Access(f func(*CentroidManager)) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -98,7 +105,7 @@ type CManagerTable struct {
 //	# False will be returned only if namespace doesn't exist.
 //	namespaceExist := x.Access("someNamespace", taskF)
 //	if !namespaceExist { ... }
-func (t *CManagerTable) Access(namespace string, f func(common.CentroidManager)) bool {
+func (t *CManagerTable) Access(namespace string, f func(*CentroidManager)) bool {
 	// Grab lock only for the map access, the slot has another lock for accessing
 	// common.CentroidManger itself.
 	t.Lock()
@@ -135,7 +142,7 @@ type KMeansServer struct {
 	Table *CManagerTable
 	// The server has functionality for creating concrete common.CentroidManager
 	// and will as such need a factory func for that.
-	CentroidManagerFactoryFunc func(vec []float64) common.CentroidManager
+	CentroidManagerFactoryFunc func(vec []float64) *CentroidManager
 }
 
 // StartListen is a convenience func for starting one or more instances of
