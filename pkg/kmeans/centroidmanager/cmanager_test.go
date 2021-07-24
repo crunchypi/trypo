@@ -113,7 +113,6 @@ func newCentroidManager(vec []float64) CentroidManager {
 	cm, ok := NewCentroidManager(NewCentroidManagerArgs{
 		InitVec:             vec,
 		InitCap:             0,
-		CentroidFactoryFunc: newCentroid,
 		CentroidDPThreshold: 10,
 		KNNSearchFunc:       _knnSearchFunc,
 		KFNSearchFunc:       _kfnSearchFunc,
@@ -299,7 +298,6 @@ func TestAddDataPointSplit(t *testing.T) {
 	cm, ok := NewCentroidManager(NewCentroidManagerArgs{
 		InitVec:             vec(0, 0),
 		InitCap:             0,
-		CentroidFactoryFunc: newCentroid,
 		CentroidDPThreshold: 2,
 		KNNSearchFunc:       searchutils.KNNCos,
 		KFNSearchFunc:       searchutils.KFNCos,
