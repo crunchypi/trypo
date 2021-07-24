@@ -8,12 +8,13 @@ package centroidmanager
 
 import (
 	"sort"
+	"trypo/pkg/kmeans/centroid"
 	"trypo/pkg/kmeans/common"
 	"trypo/pkg/mathutils"
 )
 
 // Interface hint:
-var _ common.CentroidManager = new(CentroidManager)
+var _ common.DataPointReceiver = new(CentroidManager)
 
 // Abbreviation.
 type dpReceivers = []common.DataPointReceiver
@@ -29,9 +30,11 @@ type CentroidManager struct {
 	// Capacity of internal Centroids slice.
 	initCap int
 
-	// See NewCentroidManagerArgs.CentroidFactoryFunc.
-	centroidFactoryFunc func(vec []float64) common.Centroid
-	Centroids           []common.Centroid
+	// Slice of centroid.Centroids pointers because a centroid is essentially
+	// a number of methods on top of a slice of common.DataPoint -- which is
+	// a ref type, so using a ptr syntax here makes it difficult to get the
+	// wrong idea.
+	Centroids []*centroid.Centroid
 
 	// This value specifies when internal Centroids should be split.
 	// Specifically, if the amount of common.DataPoints in a centroid
@@ -50,11 +53,6 @@ type NewCentroidManagerArgs struct {
 	InitVec []float64
 	// Capacity of internal Centroids slice.
 	InitCap int
-
-	// Specifies how to create new Centroids. The CentroidManager type doesn't
-	// have any methods to directly add Centroids, that will be done as needed
-	// automatically with this func.
-	CentroidFactoryFunc func(vec []float64) common.Centroid
 
 	CentroidDPThreshold int
 	// KNNSearchFunc will be used for operations where it is necessary to find
@@ -84,21 +82,14 @@ type NewCentroidManagerArgs struct {
 }
 
 // NewCentroid creates a new centroid manager with the specified args.
-func NewCentroidManager(args NewCentroidManagerArgs) (*CentroidManager, bool) {
+func NewCentroidManager(args NewCentroidManagerArgs) (CentroidManager, bool) {
 	if args.KNNSearchFunc == nil || args.KFNSearchFunc == nil {
-		return nil, false
-	}
-	if args.CentroidFactoryFunc == nil {
-		return nil, false
-	}
-	if args.CentroidFactoryFunc([]float64{1}) == nil {
-		return nil, false
+		return CentroidManager{}, false
 	}
 
 	cm := CentroidManager{
 		vec:                 make([]float64, len(args.InitVec)),
-		centroidFactoryFunc: args.CentroidFactoryFunc,
-		Centroids:           make([]common.Centroid, 0, args.InitCap),
+		Centroids:           make([]*centroid.Centroid, 0, args.InitCap),
 		centroidDPThreshold: args.CentroidDPThreshold,
 		initCap:             args.InitCap,
 		knnSearchFunc:       args.KNNSearchFunc,
@@ -107,7 +98,24 @@ func NewCentroidManager(args NewCentroidManagerArgs) (*CentroidManager, bool) {
 	for i, v := range args.InitVec {
 		cm.vec[i] = v
 	}
-	return &cm, true
+	return cm, true
+}
+
+func (cm *CentroidManager) newCentroid(vec []float64) *centroid.Centroid {
+	v := make([]float64, len(vec))
+	copy(v, vec)
+	args := centroid.NewCentroidArgs{
+		InitVec:       v,
+		InitCap:       cm.initCap,
+		KNNSearchFunc: cm.knnSearchFunc,
+		KFNSearchFunc: cm.kfnSearchFunc,
+	}
+	centroid, ok := centroid.NewCentroid(args)
+	if !ok {
+		panic("impl error; didn't create new centroid.")
+	}
+	return &centroid
+
 }
 
 // centroidDataPointPortions creates a map where keys represent indexes into
@@ -160,16 +168,19 @@ func (cm *CentroidManager) centroidVecGenerator() func() ([]float64, bool) {
 }
 
 // splitCentroid 'splits' a centroid in cm.Centroids at the specified index.
-// A new common.Centroid will be created with the same internal vector, and
-// it will receive 'trimN' (max) common.DataPoints from the old Centroid.
-func (cm *CentroidManager) splitCentroid(atIndex, trimN int) (common.Centroid, bool) {
+// A new common.Centroid will be created with the same internal vector (copy),
+// and it will receive 'trimN' (max) common.DataPoints from the old Centroid.
+func (cm *CentroidManager) splitCentroid(atIndex, trimN int) (*centroid.Centroid, bool) {
 	// Note; trimN <= 0 is important, as it ignores auto-splits done in
 	// km.AddDataPoint when km.CentroidDPThreshold is not set (i.e 0).
 	if atIndex < 0 || atIndex >= len(cm.Centroids) || trimN <= 0 {
 		return nil, false
 	}
-	newCentroid := cm.centroidFactoryFunc(cm.Centroids[atIndex].Vec())
-	dps := cm.Centroids[atIndex].DrainUnordered(trimN)
+	oldCentroid := cm.Centroids[atIndex]
+	newVec := make([]float64, len(oldCentroid.Vec()))
+	copy(newVec, oldCentroid.Vec())
+	newCentroid := cm.newCentroid(newVec)
+	dps := oldCentroid.DrainUnordered(trimN)
 	for i := 0; i < len(dps); i++ {
 		newCentroid.AddDataPoint(dps[i])
 	}
@@ -227,7 +238,7 @@ func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 
 	// Add first centroid.
 	if len(cm.Centroids) == 0 {
-		c := cm.centroidFactoryFunc(dp.Vec())
+		c := cm.newCentroid(dp.Vec)
 		c.AddDataPoint(dp)
 		cm.Centroids = append(cm.Centroids, c)
 		cm.vec = c.Vec()
@@ -235,7 +246,7 @@ func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 	}
 
 	// Try find nearest centroid.
-	indexes := cm.knnSearchFunc(dp.Vec(), cm.centroidVecGenerator(), 1)
+	indexes := cm.knnSearchFunc(dp.Vec, cm.centroidVecGenerator(), 1)
 	if len(indexes) == 0 {
 		return false
 	}
@@ -260,10 +271,8 @@ func (cm *CentroidManager) AddDataPoint(dp common.DataPoint) bool {
 	return true
 }
 
-// DrainUnordered drains max n datapoints from internal centroids in an order
-// that has no particular _intended_ significance, depending on how internal
-// Centroids (created with NewCentroidManagerArgs.CentroidFactoryFunc, set
-// when using NewCentroidManager(...)) implement the method with the same name.
+// DrainUnordered drains max n datapoints from internal centroids (by calling
+// the method with the same name) in an order with no particular significance.
 // The draining load will be as uniform/even as possible amongst the internal
 // centroids, i.e if n=2 and there are 2 centroids with at least 1 dp each, then
 // both of them will drain 1 dp. Note, will update CentroidManager vector.
@@ -281,13 +290,15 @@ func (cm *CentroidManager) DrainUnordered(n int) []common.DataPoint {
 	return res
 }
 
-// DrainOrdered drains max n 'worst-fit' datapoints from internal centroids,
-// depending on how Centroids (created with CentroidFactoryFunc field specified
-// when using NewCentroidManagerArgs for NewCentroidManager(...)) implement
-// the method with the same name. The draining load will be as uniform/even as
-// possible amongst the internal centroids, i.e if n=2 and there are 2 centroids
-// with at least 1 dp each, then both of them will drain 1 dp. Note, will
-// update CentroidManager vector.
+// DrainOrdered drains max n 'worst-fit' datapoints from internal centroids (by
+// calling the method with the same name). 'worst-fit' will depend on the val
+// specified to NewCentroidManagerArgs.KFNSearchFunc creating this instance with
+// NewCentroidManager(...), but will in general be the datapoints that are least
+// similar to the centroid they're stored in (Euclidean distance, cosine
+// similarity , etc). The draining load will be as uniform/even as possible
+// amongst the internal centroids, i.e if n=2 and there are 2 centroids with at
+// least 1 dp each, then both of them will drain 1 dp. Note, will update
+// CentroidManager vector.
 func (cm *CentroidManager) DrainOrdered(n int) []common.DataPoint {
 	res := make([]common.DataPoint, 0, n)
 	for centroidIndex, portion := range cm.centroidDataPointPortions(n) {
@@ -301,12 +312,9 @@ func (cm *CentroidManager) DrainOrdered(n int) []common.DataPoint {
 	return res
 }
 
-// Expire calls the method with the same name on all internal Centroids.
-// This should expire all datapoints stored in all centroids, but the exact
-// behavior depends on the implementation of Centroids returned with the
-// func specified when creating this CentroidManager instance (see
-// NewCentroidManagerArgs.CentroidFactoryFunc).
-// Note, will update CentroidManager vector.
+// Expire calls the method with the same name on all internal Centroids, which
+// will expire and remove their stored datapoints. Note, will update internal
+// CentroidManager vector automatically.
 func (cm *CentroidManager) Expire() {
 	for _, centroid := range cm.Centroids {
 		// Prep for internal vec update.
@@ -319,10 +327,7 @@ func (cm *CentroidManager) Expire() {
 
 // LenDP calls the method with the same name on all internal Centroids,
 // and returns the sum of their returns. This should return the total amount
-// of DataPoints stored in this instance, but the exact behavior depends on
-// the implementation of Centroids returned with the func specified when
-// creating this CentroidManager instance (see CentroidFactoryFunc filed of
-// NewCentroidManagerArgs).
+// of DataPoints stored in this instance
 func (cm *CentroidManager) LenDP() int {
 	res := 0
 	for _, centroid := range cm.Centroids {
@@ -331,10 +336,13 @@ func (cm *CentroidManager) LenDP() int {
 	return res
 }
 
-// MemTrim resets the internal Centroid slice where empty Centroids are
-// not included (so cap=len). Note, will update CentroidManager vector.
+// MemTrim will call the method with the same name on each internal centroid,
+// which will remove expired datapoints. In this process, all centroids that
+// have no datapoints left will be removed from this CentroidManager instance
+// such that new len=cap (i.e a new slice is created). Note, this will adjust
+// the internal CentroidManager vector automatically.
 func (cm *CentroidManager) MemTrim() {
-	centroids := make([]common.Centroid, 0, len(cm.Centroids))
+	centroids := make([]*centroid.Centroid, 0, len(cm.Centroids))
 	for _, centroid := range cm.Centroids {
 		// Prep for internal vec update.
 		updateVec := cm.prepVecUpdate(centroid.Vec())
@@ -358,6 +366,9 @@ func (cm *CentroidManager) MemTrim() {
 }
 
 // MoveVector sets the internal vector to the average of all internal Centroids.
+// A good number of methods of CentroidManager will do this automatically and
+// efficiently (this will be specified in each method doc), so this method call
+// isn't always necessary, though is still included in case it is needed.
 func (cm *CentroidManager) MoveVector() bool {
 	for _, centroid := range cm.Centroids {
 		centroid.MoveVector()
@@ -370,11 +381,10 @@ func (cm *CentroidManager) MoveVector() bool {
 	return ok
 }
 
-// DistributeDataPoints should drain 'n' DataPoints from internal Centroids and
-// give them to the best-fit 'receivers'. The exact behavior, i.e draining and
-// finding 'best-fit' will depend on how the internal Centroids (created with
-// CentroidFactoryFunc field specified when using NewCentroidManagerArgs for
-// NewCentroidManager(...)) imlement the method with the same name. Additionally,
+// DistributeDataPoints will drain max 'n' DataPoints from internal Centroids
+// using Centroid.DrainOrdered and give them to the 'best-fit' 'receivers'.
+// 'best-fit' wil depend on the val specified as field KNNSearchFunc in type
+// NewCentroidManagerArgs while creating this instance with NewCentroidManager(..).
 // 'n' will be divided as evenly/uniformly as possible amongst the internal
 // Centroids (so if n=2 and there are 2 centroids with at least 1 dp each, then
 // both of them will give away 1 dp each). Note; updates internal
@@ -395,7 +405,7 @@ func (cm *CentroidManager) DistributeDataPoints(n int, receivers dpReceivers) {
 
 // DistributeDataPoints uses internal Centroids as receivers to
 // CentroidManager.DistributeDataPoints. This should in practice distribute
-// n datapoints amongst the best-fit internal Centroids.
+// 'n' datapoints amongst the best-fit internal Centroids.
 func (cm *CentroidManager) DistributeDataPointsInternal(n int) {
 	receivers := make([]common.DataPointReceiver, len(cm.Centroids))
 	for i, centroid := range cm.Centroids {
@@ -409,9 +419,7 @@ func (cm *CentroidManager) DistributeDataPointsInternal(n int) {
 // it will find internal Centroids that are best-fit to 'vec', which will
 // depend on how the func specified in NewCentroidManagerArgs.KNNSearchFunc
 // works (this could be cosine similarity, for instance) -- then the method
-// with the same name (KNNLookup) will be called on those Centroids (that
-// behavor depends on how Centroids are created with the CentroidFactoryFunc
-// func, specified when using NewCentroidManagerArgs for NewCentroidManager()).
+// with the same name (KNNLookup) will be called on those Centroids.
 // Note, will update internal CentroidManager vector.
 func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.DataPoint {
 	res := make([]common.DataPoint, 0, k)
@@ -458,13 +466,13 @@ func (cm *CentroidManager) KNNLookup(vec []float64, k int, drain bool) []common.
 // and the datapoint state of the returned Centroid(s) are/is changed, do a
 // call to CentroidManager.MoveVector() to update the internal vec.
 func (cm *CentroidManager) NearestCentroids(vec []float64, n int, drain bool) (
-	[]common.Centroid, bool,
+	[]*centroid.Centroid, bool,
 ) {
 	indexes := cm.knnSearchFunc(vec, cm.centroidVecGenerator(), n)
 	if len(indexes) == 0 {
 		return nil, false
 	}
-	centroids := make([]common.Centroid, 0, n)
+	centroids := make([]*centroid.Centroid, 0, n)
 	for _, index := range indexes {
 		centroids = append(centroids, cm.Centroids[index])
 	}
@@ -490,8 +498,8 @@ func (cm *CentroidManager) NearestCentroids(vec []float64, n int, drain bool) (
 // be split in half. Example:
 //	split := func(c common.Centroid) { return c.LenDP() > 100 }
 // .. will split in half all centroids that have more than 100 internal DPs.
-func (cm *CentroidManager) SplitCentroids(split func(common.Centroid) bool) {
-	newCentroids := make([]common.Centroid, 0, 10)
+func (cm *CentroidManager) SplitCentroids(split func(*centroid.Centroid) bool) {
+	newCentroids := make([]*centroid.Centroid, 0, 10)
 
 	for i, centroid := range cm.Centroids {
 		if !split(centroid) {
@@ -521,7 +529,7 @@ func (cm *CentroidManager) SplitCentroids(split func(common.Centroid) bool) {
 //	into their _nearest_ other centroids until they have at least 10 dps.
 //
 // Note, will update internal CentroidManager vector.
-func (cm *CentroidManager) MergeCentroids(merge func(common.Centroid) bool) {
+func (cm *CentroidManager) MergeCentroids(merge func(*centroid.Centroid) bool) {
 	// When two centroids are merged, one of them will be marked for deletion
 	// here, to prevent duplication of internal data. Keys=cm.Centroids indexes.
 	delMarks := make(map[int]bool, len(cm.Centroids))
@@ -574,10 +582,4 @@ func (cm *CentroidManager) MergeCentroids(merge func(common.Centroid) bool) {
 			cm.Centroids = append(cm.Centroids[:i], cm.Centroids[i+1:]...)
 		}
 	}
-}
-
-// DangerExposeCentroidSlice simply exposes internal slice of Centroids.
-// Altering this slice might be dangerous/lead to internal state issues.
-func (cm *CentroidManager) DangerExposeCentroidSlice() []common.Centroid {
-	return cm.Centroids
 }
