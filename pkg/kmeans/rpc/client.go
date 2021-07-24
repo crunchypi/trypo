@@ -4,19 +4,29 @@ import (
 	"net/rpc"
 )
 
+// client tries to connect to a remote client with c.remoteAddr, give
+// it to the task func, then clean the client up. It is meant to reduce
+// some rpc boilerplate.
+func (c *kmeansClient) client(taskF func(*rpc.Client)) {
+	client, err := rpc.Dial("tcp", c.remoteAddr)
+	if err != nil {
+		*c.err = err
+		return
+	}
+	defer client.Close()
+	taskF(client)
+}
+
 // Calls the method with the same name on a concrete remote instance of
 // common.CentroidManager, using the addr and namespace specified while
 // setting up this client with KMeansClient(...).
 func (c *kmeansClient) Vec() []float64 {
-	client, err := rpc.Dial("tcp", c.remoteAddr)
-	if err != nil {
-		*c.err = err
-		return nil
-	}
-	defer client.Close()
-
 	var resp []float64
-	*c.err = client.Call("KMeansServer.Vec", c.namespace, &resp)
+
+	c.client(func(rc *rpc.Client) {
+		*c.err = rc.Call("KMeansServer.Vec", c.namespace, &resp)
+	})
+
 	return resp
 }
 
@@ -24,15 +34,12 @@ func (c *kmeansClient) Vec() []float64 {
 // common.CentroidManager, using the addr and namespace specified while
 // setting up this client with KMeansClient(...).
 func (c *kmeansClient) AddDataPoint(dp DataPoint) bool {
-	client, err := rpc.Dial("tcp", c.remoteAddr)
-	if err != nil {
-		*c.err = err
-		return false
-	}
-	defer client.Close()
-
-	args := AddDataPointArgs{NameSpace: c.namespace, DP: dp}
 	var resp bool
-	*c.err = client.Call("KMeansServer.AddDataPoint", args, &resp)
+
+	c.client(func(rc *rpc.Client) {
+		args := AddDataPointArgs{NameSpace: c.namespace, DP: dp}
+		*c.err = rc.Call("KMeansServer.AddDataPoint", args, &resp)
+	})
+
 	return resp
 }
