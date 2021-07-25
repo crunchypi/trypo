@@ -13,6 +13,7 @@ import (
 	"trypo/pkg/kmeans/centroid"
 	"trypo/pkg/kmeans/centroidmanager"
 	"trypo/pkg/kmeans/common"
+	"trypo/pkg/searchutils"
 )
 
 // Abbreviations.
@@ -37,6 +38,13 @@ type kmeansClient struct {
 	remoteAddr string
 	namespace  string
 	err        *error
+
+	// Misc; func for doing a knn search, where 'targetVec' is the vec to find k
+	// nearest neighs for, 'vecs' is a generator of vectors (vector pool).
+	// Return must be a slice of indexes referencing the vector pool.
+	KNNSearchFunc func(targetVec []float64, vecs func() ([]float64, bool), k int) []int
+	// Misc; func for creating a Centroid behind a pointer.
+	CentroidFactory func(vec []float64) *Centroid
 }
 
 // KMeansClient forces a correct setup/use of the kmeansClient type, it
@@ -47,12 +55,31 @@ type kmeansClient struct {
 //	var err error
 // 	vec := KMeansClient("localhost:3000", "someNamespace", &err).Vec()
 //	if err != nil { ... }
+//
+// Misc: The returned instance can have additional configuration for
+// fields KNNSearchFunc and CentroidFactory. The necessity for their
+// config will be mentioned for relevant methods.
 func KMeansClient(remoteAddr, namespace string, err *error) *kmeansClient {
 	if err == nil {
 		var e error
 		err = &e
 	}
-	return &kmeansClient{remoteAddr: remoteAddr, namespace: namespace, err: err}
+	return &kmeansClient{
+		remoteAddr: remoteAddr,
+		namespace:  namespace,
+		err:        err,
+
+		KNNSearchFunc: searchutils.KNNCos,
+		CentroidFactory: func(vec []float64) *Centroid {
+			centroid, _ := centroid.NewCentroid(centroid.NewCentroidArgs{
+				InitVec:       vec,
+				InitCap:       10,
+				KNNSearchFunc: searchutils.KNNCos,
+				KFNSearchFunc: searchutils.KFNCos,
+			})
+			return &centroid
+		},
+	}
 }
 
 /*
@@ -138,10 +165,10 @@ func (t *CManagerTable) AddSlot(namespace string, cms *CManagerSlot) bool {
 type KMeansServer struct {
 	// Address associated with this server.
 	addr string
-	// Table with concrete (common.CentroidManager) data.
+	// Table with namespaced common.CentroidManager instances.
 	Table *CManagerTable
-	// The server has functionality for creating concrete common.CentroidManager
-	// and will as such need a factory func for that.
+	// The server has functionality for creating new namespaced CentroidManager
+	// and will need a way of doing that.
 	CentroidManagerFactoryFunc func(vec []float64) *CentroidManager
 }
 

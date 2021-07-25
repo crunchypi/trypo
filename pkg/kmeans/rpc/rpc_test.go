@@ -91,6 +91,14 @@ func dp(v []float64, sleepUnits int) DataPoint {
 	return _dp
 }
 
+func dps2Vecs(dps []common.DataPoint) [][]float64 {
+	res := make([][]float64, len(dps))
+	for i, dp := range dps {
+		res[i] = dp.Vec
+	}
+	return res
+}
+
 func newCentroid(vec []float64) *Centroid {
 	args := centroid.NewCentroidArgs{
 		InitVec:       vec,
@@ -462,6 +470,343 @@ func TestMoveVector(t *testing.T) {
 
 	if !vecEq(cm.Vec(), vec(2, 2)) {
 		t.Fatalf("incorrect remote vec: want %v, have %v", vec(2, 2), cm.Vec())
+	}
+}
+
+func TestDistributeDataPoints(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+
+	// Test setup:
+	// The CentroidManager and datapoint setup below is set up such
+	// that dp4 is in cm1 but is actually closer to cm2. Likewise, dp8
+	// is in cm2 but is closer to cm1.
+
+	// Node 1.
+	cm1 := newCentroidManager(vec(0, 0))
+	slot1 := CManagerSlot{cManager: cm1}
+	addr1 := addrs[0]
+	network.nodes[addr1].Table.AddSlot(namespace, &slot1)
+
+	// Node 2.
+	cm2 := newCentroidManager(vec(0, 0))
+	slot2 := CManagerSlot{cManager: cm2}
+	addr2 := addrs[1]
+	network.nodes[addr2].Table.AddSlot(namespace, &slot2)
+
+	// Mean: (1, 4.5) : Small angle.
+	cm1.AddDataPoint(dp(vec(1, 3), 0)) // dp1
+	cm1.AddDataPoint(dp(vec(1, 3), 0)) // dp2
+	cm1.AddDataPoint(dp(vec(1, 3), 0)) // dp3
+	cm1.AddDataPoint(dp(vec(1, 9), 0)) // dp4: closest to c2.
+
+	// Mean: (1, 7.5) : Large angle
+	cm2.AddDataPoint(dp(vec(1, 9), 0)) // dp5
+	cm2.AddDataPoint(dp(vec(1, 9), 0)) // dp6
+	cm2.AddDataPoint(dp(vec(1, 9), 0)) // dp7
+	cm2.AddDataPoint(dp(vec(1, 3), 0)) // dp8: closest to c1.
+
+	// Validation.
+	rcv := []common.DataPointReceiver{
+		KMeansClient(addr1, namespace, nil),
+		KMeansClient(addr2, namespace, nil),
+	}
+	for i, addr := range []string{addr1, addr2} { // Move dps between nodes.
+		var err error
+		KMeansClient(addr, namespace, &err).DistributeDataPoints(1, rcv)
+
+		if err != nil {
+			t.Fatalf("client %v err: %v", i, err)
+		}
+	}
+
+	c1dps := cm1.DrainUnordered(9) // Convenience
+	c2dps := cm2.DrainUnordered(9) // Convenience
+
+	if len(c1dps) != 4 {
+		t.Fatalf("incorrect dp amount in c1: %v\n", len(c1dps))
+	}
+	if len(c2dps) != 4 {
+		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
+	}
+	// Confirm that dp4 is no longer in c1 (moved to c2).
+	if vecIn(vec(1, 9), dps2Vecs(c1dps)) {
+		t.Fatalf("c1dps still contains vec with bad fit.")
+	}
+	// Confirm that dp8 is no longer in c2 (moved to c1).
+	if vecIn(vec(1, 3), dps2Vecs(c2dps)) {
+		t.Fatalf("c2dps still contains vec with bad fit.")
+	}
+}
+
+func TestDistributeDataPointsInternal(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	// Test setup:
+	// The centroid and datapoint setup below is set up such that
+	// dp4 is in c1 but is actually closer to c2. Likewise, dp8
+	// is in c2 but is closer to c1.
+
+	// These 2 vectors don't matter, they are assumed to be auto,
+	// adjusted while adding dps. That is why there are a lot
+	// of added dps below (so dp4 and dp8 are oddballs).
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(vec(1, 1))
+
+	// Mean: (1, 4.5) : Small angle.
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp1
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp2
+	c1.AddDataPoint(dp(vec(1, 3), 0)) // dp3
+	c1.AddDataPoint(dp(vec(1, 9), 0)) // dp4: closest to c2.
+
+	// Mean: (1, 7.5) : Large angle
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp5
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp6
+	c2.AddDataPoint(dp(vec(1, 9), 0)) // dp7
+	c2.AddDataPoint(dp(vec(1, 3), 0)) // dp8: closest to c1.
+
+	cm := newCentroidManager(vec(0))
+	cm.Centroids = []*centroid.Centroid{c1, c2}
+	slot := CManagerSlot{cManager: cm}
+	network.nodes[addr].Table.AddSlot(namespace, &slot)
+
+	// Validation.
+	var err error
+	KMeansClient(addr, namespace, &err).DistributeDataPointsInternal(99)
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+
+	c1dps := c1.DrainUnordered(9) // Convenience
+	c2dps := c2.DrainUnordered(9) // Convenience
+
+	if len(c1dps) != 4 {
+		t.Fatalf("incorrect dp amount in c1: %v\n", len(c1dps))
+	}
+	if len(c2dps) != 4 {
+		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2dps))
+	}
+	// Confirm that dp4 is no longer in c1 (moved to c2).
+	if vecIn(vec(1, 9), dps2Vecs(c1dps)) {
+		t.Fatalf("c1dps still contains vec with bad fit.")
+	}
+
+	// Confirm that dp8 is no longer in c2 (moved to c1).
+	if vecIn(vec(1, 3), dps2Vecs(c2dps)) {
+		t.Fatalf("c2dps still contains vec with bad fit.")
+	}
+}
+
+func TestKNNLookup(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	// Test setup; setup remote node with a couple of dps, the query
+	// (vec) should be closest to one of them.
+	cm := newCentroidManager(vec(0, 0))
+	slot := CManagerSlot{cManager: cm}
+	network.nodes[addr].Table.AddSlot(namespace, &slot)
+
+	dp1 := dp(vec(1, 2), 0)
+	dp2 := dp(vec(1, 9), 0)
+
+	cm.AddDataPoint(dp1)
+	cm.AddDataPoint(dp2)
+
+	queryVec := vec(1, 3) // closest to dp1
+
+	// Validation.
+	var err error
+	dps := KMeansClient(addr, namespace, &err).KNNLookup(queryVec, 1, true)
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+
+	if len(dps) != 1 {
+		t.Fatalf("unexpected dps len: %v", len(dps))
+	}
+
+	if !vecEq(dps[0].Vec, dp1.Vec) {
+		t.Fatalf("unexpected dp return: vec=%v", dps[0].Vec)
+	}
+}
+
+func TestNearestCentroid(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	// Test setup; setup remote node with a couple of centroids,
+	// the query (vec) should be closest to one of them.
+	d1 := dp(vec(1, 4), 0)
+	d2 := dp(vec(1, 9), 0)
+
+	c1 := newCentroid(d1.Vec)
+	c1.AddDataPoint(d1)
+
+	c2 := newCentroid(d2.Vec)
+	c2.AddDataPoint(d2)
+
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []*Centroid{c1, c2}
+	slot := CManagerSlot{cManager: cm}
+	network.nodes[addr].Table.AddSlot(namespace, &slot)
+
+	queryVec := vec(1, 3) // Closest to c1.
+
+	// Validate.
+	var err error
+	cs, _ := KMeansClient(addr, namespace, &err).NearestCentroids(queryVec, 1, true)
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+
+	if len(cs) != 1 {
+		t.Fatalf("got incorrect centroids as resp: %v", len(cs))
+	}
+
+	if !vecEq(cs[0].Vec(), d1.Vec) {
+		t.Fatalf("got incorrect centroid with vec %v", cs[0].Vec())
+	}
+
+	if len(cm.Centroids) != 1 {
+		t.Fatalf("remote CentroidManager didn't lose a centroid")
+	}
+
+	v := cm.Centroids[0].Vec()
+	if !vecEq(v, vec(1, 9)) {
+		t.Fatalf("unexpected remote cm centroid remainder with vec %v", v)
+	}
+}
+
+func TestNearestCentroidVec(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	// Test setup; remote node with two centroids, where one is closest
+	// to the queryVec.
+	queryVec := vec(1, 9)
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(queryVec)
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []*Centroid{c1, c2}
+	slot := CManagerSlot{cManager: cm}
+	network.nodes[addr].Table.AddSlot(namespace, &slot)
+
+	// Validation.
+	var err error
+	resp := KMeansClient(addr, namespace, &err).NearestCentroidVec(queryVec)
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+	if resp == nil {
+		t.Fatalf("nil resp vec")
+	}
+	if !vecEq(queryVec, resp) {
+		t.Fatalf("unexpected resp: %v", resp)
+	}
+
+}
+
+func TestSplitCentroids(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	// Test setup: Setup a remote CentroidManager containing one Centroid with
+	// 4 dps. The kmeansClient.SplitCentroids method accepts a range; if a
+	// Centroid in a CentroidManager has an amount of dps that falls within
+	// that range, then that Centroid will be split in half.
+	dps := []common.DataPoint{
+		dp(vec(1), 0),
+		dp(vec(1), 0),
+		dp(vec(1), 0),
+		dp(vec(1), 0),
+	}
+	c1 := newCentroid(dps[0].Vec)
+	for _, dp := range dps {
+		c1.AddDataPoint(dp)
+	}
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []*Centroid{c1}
+	slot := CManagerSlot{cManager: cm}
+	network.nodes[addr].Table.AddSlot(namespace, &slot)
+
+	// Validation:
+	var err error
+	KMeansClient(addr, namespace, &err).SplitCentroids(0, len(dps)+1)
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+
+	if len(cm.Centroids) != 2 {
+		t.Fatalf("incorrect centroid count after split: %v", len(cm.Centroids))
+	}
+
+	l1 := cm.Centroids[0].LenDP()
+	l2 := cm.Centroids[1].LenDP()
+	if l1 != 2 || l2 != 2 {
+		t.Fatal("uneven datapoint distribution after split:", l1, l2)
+	}
+}
+
+func TestMergeCentroids(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	// Test setup: Setup a remote CentroidManager with 3 Centroids where:
+	// - c1 len(dp) = 1
+	// - c2 len(dp) = 1
+	// - c3 len(dp) = 2
+	// The merge condition will be that a centroid with 2 dps (so c3) is
+	// merged with another centroid that is closest to it (c1).
+	c1 := newCentroid(vec(1, 1))
+	c2 := newCentroid(vec(1, 9))
+	c3 := newCentroid(vec(1, 2)) // closest to c1.
+
+	c1.AddDataPoint(dp(vec(1, 1), 0))
+	c2.AddDataPoint(dp(vec(1, 1), 0))
+	c3.AddDataPoint(dp(vec(1, 1), 0))
+	c3.AddDataPoint(dp(vec(1, 1), 0))
+
+	cm := newCentroidManager(vec(0, 0))
+	cm.Centroids = []*centroid.Centroid{c1, c2, c3}
+	slot := CManagerSlot{cManager: cm}
+	network.nodes[addr].Table.AddSlot(namespace, &slot)
+
+	// Validation.
+	var err error
+	KMeansClient(addr, namespace, &err).MergeCentroids(1, 3)
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+
+	if len(cm.Centroids) != 2 {
+		t.Fatalf("unexpected cm.Centroids len: %v", len(cm.Centroids))
+	}
+	// 1) Merge cond for c3, nearest is c1.
+	// 2) c1 merged into c3.
+	// 3) cm.Centroids= [c2, c3].
+	if cm.Centroids[1].LenDP() != 3 {
+		t.Fatalf("c3 didn't get merged into c1")
 	}
 }
 

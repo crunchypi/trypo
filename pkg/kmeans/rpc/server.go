@@ -103,3 +103,111 @@ func (s *KMeansServer) MoveVector(namespace string, resp *bool) error {
 	}
 	return nil
 }
+
+/*
+Reason for why DistributeDataPoints method is missing is written in client.go,
+right after MoveVector.
+*/
+
+type DistribDPIArgs struct {
+	NameSpace string
+	N         int
+}
+
+func (s *KMeansServer) DistributeDataPointsInternal(args DistribDPIArgs, _ *int) error {
+	lookupOK := s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		cm.DistributeDataPointsInternal(args.N)
+	})
+	if !lookupOK {
+		return NamespaceErr{args.NameSpace}
+	}
+	return nil
+}
+
+type KNNLookupArgs struct {
+	NameSpace string
+	Vec       []float64
+	K         int
+	Drain     bool
+}
+
+func (s *KMeansServer) KNNLookup(args KNNLookupArgs, resp *[]DataPoint) error {
+	lookupOK := s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		*resp = cm.KNNLookup(args.Vec, args.K, args.Drain)
+	})
+	if !lookupOK {
+		return NamespaceErr{args.NameSpace}
+	}
+	return nil
+}
+
+type NearestCentroidArgs struct {
+	NameSpace string
+	Vec       []float64
+	N         int
+	Drain     bool
+}
+
+func (s *KMeansServer) NearestCentroids(args NearestCentroidArgs, r *[]*Centroid) error {
+	lookupOK := s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		*r, _ = cm.NearestCentroids(args.Vec, args.N, args.Drain)
+	})
+	if !lookupOK {
+		return NamespaceErr{args.NameSpace}
+	}
+	return nil
+}
+
+type NearestCentroidVecArgs struct {
+	NameSpace string
+	Vec       []float64
+}
+
+func (s *KMeansServer) NearestCentroidVec(args NearestCentroidVecArgs, r *[]float64) error {
+	lookupOK := s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		centroids, _ := cm.NearestCentroids(args.Vec, 1, false)
+		if len(centroids) != 0 {
+			*r = centroids[0].Vec()
+		}
+	})
+	if !lookupOK {
+		return NamespaceErr{args.NameSpace}
+	}
+	return nil
+}
+
+type SplitCentroidsArgs struct {
+	NameSpace  string
+	DPRangeMin int
+	DPRangeMax int
+}
+
+func (s *KMeansServer) SplitCentroids(args SplitCentroidsArgs, _ *int) error {
+	lookupOK := s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		cm.SplitCentroids(func(c *Centroid) bool {
+			return c.LenDP() > args.DPRangeMin && c.LenDP() < args.DPRangeMax
+		})
+	})
+	if !lookupOK {
+		return NamespaceErr{args.NameSpace}
+	}
+	return nil
+}
+
+type MergeCentroidsArgs struct {
+	NameSpace  string
+	DPRangeMin int
+	DPRangeMax int
+}
+
+func (s *KMeansServer) MergeCentroids(args SplitCentroidsArgs, _ *int) error {
+	lookupOK := s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		cm.MergeCentroids(func(c *Centroid) bool {
+			return c.LenDP() > args.DPRangeMin && c.LenDP() < args.DPRangeMax
+		})
+	})
+	if !lookupOK {
+		return NamespaceErr{args.NameSpace}
+	}
+	return nil
+}
