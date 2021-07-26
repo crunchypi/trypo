@@ -248,7 +248,7 @@ func (c *kmeansClient) NearestCentroids(vec []float64, n int, drain bool) (
 		newCentroid := c.CentroidFactory(dps[0].Vec)
 		newCentroid.DataPoints = dps
 		newCentroid.MoveVector()
-		resp[0] = newCentroid
+		resp[i] = newCentroid
 	}
 
 	return resp, true
