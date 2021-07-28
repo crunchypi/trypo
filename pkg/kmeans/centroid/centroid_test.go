@@ -23,36 +23,21 @@ var vec = mathutils.Vec     // Create new vec.
 var vecEq = mathutils.VecEq // compare two vecs.
 var vecIn = mathutils.VecIn // Check if []vec contains vec.
 
-type datapoint struct {
-	vec           []float64
-	payload       []byte
-	expires       time.Time
-	expireEnabled bool
-}
-
-func (dp *datapoint) Vec() []float64 { return dp.vec }
-
-func (dp *datapoint) Payload() []byte { return dp.payload }
-
-func (dp *datapoint) Expired() bool {
-	return dp.expireEnabled && time.Now().After(dp.expires)
-}
-
 // helper for creating a data point.
-func dp(v []float64, sleepUnits int) *datapoint {
-	_dp := datapoint{vec: v}
+func dp(v []float64, sleepUnits int) common.DataPoint {
+	_dp := common.DataPoint{Vec: v}
 
 	if sleepUnits > 0 {
-		_dp.expires = time.Now().Add(_SLEEPUNIT * time.Duration(sleepUnits))
-		_dp.expireEnabled = true
+		_dp.Expires = time.Now().Add(_SLEEPUNIT * time.Duration(sleepUnits))
+		_dp.ExpireEnabled = true
 	}
-	return &_dp
+	return _dp
 }
 
 func dps2Vecs(dps []common.DataPoint) [][]float64 {
 	res := make([][]float64, len(dps))
 	for i, dp := range dps {
-		res[i] = dp.Vec()
+		res[i] = dp.Vec
 	}
 	return res
 }
@@ -62,7 +47,7 @@ func sleep() {
 }
 
 // Helper for auto-configuring a centroid and search funcs.
-func newCentroid(vec []float64) *Centroid {
+func newCentroid(vec []float64) Centroid {
 	c, ok := NewCentroid(NewCentroidArgs{
 		InitVec:       vec,
 		InitCap:       0,
@@ -165,7 +150,7 @@ func TestDataPointVecGenerator(t *testing.T) {
 	if len(c.DataPoints) != 1 {
 		t.Fatalf("generator didn't expire one datapoint")
 	}
-	if !vecEq(c.DataPoints[0].Vec(), vec(1, 2)) {
+	if !vecEq(c.DataPoints[0].Vec, vec(1, 2)) {
 		t.Fatalf("generator expired incorrect datapoint")
 	}
 }
@@ -183,13 +168,13 @@ func TestDrainUnordered(t *testing.T) {
 	if len(c.DataPoints) != 1 {
 		t.Fatalf("incorrect amt of dps in centroid: %v", c.DataPoints)
 	}
-	if !vecEq(c.DataPoints[0].Vec(), vec(4, 4)) {
+	if !vecEq(c.DataPoints[0].Vec, vec(4, 4)) {
 		t.Fatalf("incorrect dp remainder in centroid: %v", c.DataPoints)
 	}
 	if len(dps) != 1 {
 		t.Fatalf("result should be of len 1: %v", dps)
 	}
-	if !vecEq(dps[0].Vec(), vec(3, 3)) {
+	if !vecEq(dps[0].Vec, vec(3, 3)) {
 		t.Fatalf("inorrect drain result: %v", dps)
 	}
 }
@@ -213,13 +198,13 @@ func TestDrainOrdered(t *testing.T) {
 	if len(c.DataPoints) != 1 {
 		t.Fatalf("drain issue, incorrect amt of dps in centroid: %v", c.DataPoints)
 	}
-	if !vecEq(c.DataPoints[0].Vec(), vec(1, 2)) { // DP3.
+	if !vecEq(c.DataPoints[0].Vec, vec(1, 2)) { // DP3.
 		t.Fatalf("drain issue, incorrect dp remainder in centroid: %v", c.DataPoints)
 	}
 	if len(dps) != 1 {
 		t.Fatalf("drain issue, result should be of len 1: %v", dps)
 	}
-	if !vecEq(dps[0].Vec(), vec(1, 3)) { // DP2.
+	if !vecEq(dps[0].Vec, vec(1, 3)) { // DP2.
 		t.Fatalf("drain issue: inorrect drain result: %v", dps)
 	}
 }
@@ -240,7 +225,7 @@ func TestExpire(t *testing.T) {
 	if len(c.DataPoints) != 1 {
 		t.Fatalf("expire issue, incorrect amt of dps in centroid: %v", c.DataPoints)
 	}
-	if !vecEq(c.DataPoints[0].Vec(), vec(3, 3)) {
+	if !vecEq(c.DataPoints[0].Vec, vec(3, 3)) {
 		t.Fatalf("expire issue, incorrect val remains in centroid: %v", c.DataPoints)
 	}
 }
@@ -269,7 +254,7 @@ func TestDistributeDataPoints(t *testing.T) {
 		dp(c2.vec, 0), // dp2, This should be sent to c2.
 	}
 
-	receivers := []common.DataPointReceiver{c1, c2}
+	receivers := []common.DataPointReceiver{&c1, &c2}
 	c0.DistributeDataPoints(2, receivers)
 
 	if len(c0.DataPoints) != 0 {
@@ -284,11 +269,11 @@ func TestDistributeDataPoints(t *testing.T) {
 		t.Fatalf("reciever 2 didn't recieve a dp")
 	}
 
-	if !vecEq(c1.DataPoints[0].Vec(), vec(1, 2)) { // dp1.
+	if !vecEq(c1.DataPoints[0].Vec, vec(1, 2)) { // dp1.
 		t.Fatalf("reciever 1 didn't get the correct dp")
 	}
 
-	if !vecEq(c2.DataPoints[0].Vec(), vec(1, 3)) { // dp2.
+	if !vecEq(c2.DataPoints[0].Vec, vec(1, 3)) { // dp2.
 		t.Fatalf("reciever 2 didn't get the correct dp")
 	}
 }
@@ -307,7 +292,7 @@ func TestKNNLookup(t *testing.T) {
 	if len(dp) != 1 {
 		t.Fatal("incorrect result length/amount")
 	}
-	if !vecEq(dp[0].Vec(), vec(1, 2, 3)) { // dp1.
+	if !vecEq(dp[0].Vec, vec(1, 2, 3)) { // dp1.
 		t.Fatal("incorrect result value")
 	}
 	if len(c.DataPoints) != 1 {

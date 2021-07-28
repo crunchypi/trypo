@@ -10,8 +10,8 @@ import (
 	"trypo/pkg/mathutils"
 )
 
-// Iface hint.
-var _ common.Centroid = new(Centroid)
+// Iface hint
+var _ common.DataPointReceiver = new(Centroid)
 
 // Named parameter funcs. See NewCentroidArgs.KNNSearchFunc.
 type vecGenerator = func() ([]float64, bool)
@@ -56,9 +56,9 @@ type NewCentroidArgs struct {
 }
 
 // NewCentroid creates a new centroid with the specified args.
-func NewCentroid(args NewCentroidArgs) (*Centroid, bool) {
+func NewCentroid(args NewCentroidArgs) (Centroid, bool) {
 	if args.KNNSearchFunc == nil || args.KFNSearchFunc == nil {
-		return nil, false
+		return Centroid{}, false
 	}
 
 	c := Centroid{
@@ -70,7 +70,7 @@ func NewCentroid(args NewCentroidArgs) (*Centroid, bool) {
 	for i, v := range args.InitVec {
 		c.vec[i] = v
 	}
-	return &c, true
+	return c, true
 }
 
 // Vec returns the vector of a centroid.
@@ -80,7 +80,7 @@ func (c *Centroid) Vec() []float64 { return c.vec }
 func (c *Centroid) addDataPoint(dp common.DataPoint) {
 	// Auto-adjust internal vec.
 	c.vec = mathutils.VecMulScalar(c.vec, float64(len(c.DataPoints)))
-	c.vec, _ = mathutils.VecAdd(c.vec, dp.Vec())
+	c.vec, _ = mathutils.VecAdd(c.vec, dp.Vec)
 	c.vec = mathutils.VecDivScalar(c.vec, float64(len(c.DataPoints))+1)
 
 	c.DataPoints = append(c.DataPoints, dp)
@@ -89,7 +89,7 @@ func (c *Centroid) addDataPoint(dp common.DataPoint) {
 // AddDataPoint adds a DataPoint the relevant centroid. Returns false if the vector
 // contained in dp is of different length that the vector of the centroid.
 func (c *Centroid) AddDataPoint(dp common.DataPoint) bool {
-	if len(dp.Vec()) != len(c.vec) || dp.Expired() {
+	if len(dp.Vec) != len(c.vec) || dp.Expired() {
 		return false
 	}
 	c.addDataPoint(dp)
@@ -104,7 +104,7 @@ func (c *Centroid) rmDataPoint(index int) {
 	if len(c.DataPoints) > 1 { // guard 0 div error.
 		dp := c.DataPoints[index]
 		c.vec = mathutils.VecMulScalar(c.vec, float64(len(c.DataPoints)))
-		c.vec, _ = mathutils.VecSub(c.vec, dp.Vec())
+		c.vec, _ = mathutils.VecSub(c.vec, dp.Vec)
 		c.vec = mathutils.VecDivScalar(c.vec, float64(len(c.DataPoints)-1))
 	}
 	// _Should_ be re-sliced with O(1) going by Go documentation/code.
@@ -124,7 +124,7 @@ func (c *Centroid) dataPointVecGenerator() func() ([]float64, bool) {
 			return nil, false
 		}
 		i++
-		return c.DataPoints[i-1].Vec(), true
+		return c.DataPoints[i-1].Vec, true
 	}
 }
 
@@ -229,7 +229,7 @@ func (c *Centroid) DistributeDataPoints(n int, receivers []common.DataPointRecei
 
 	for j := 0; j < len(data); j++ {
 		i = 0 // Reset generator.
-		indexes := c.knnSearchFunc(data[j].Vec(), generator, 1)
+		indexes := c.knnSearchFunc(data[j].Vec, generator, 1)
 		// Put back into self if (1) search failed or (2) adder failed to add.
 		if len(indexes) == 0 || !receivers[indexes[0]].AddDataPoint(data[j]) {
 			c.AddDataPoint(data[j])

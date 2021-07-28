@@ -1,4 +1,4 @@
-package centoidmanager
+package centroidmanager
 
 import (
 	"encoding/json"
@@ -76,41 +76,26 @@ var vec = mathutils.Vec     // Create new vec.
 var vecEq = mathutils.VecEq // compare two vecs.
 var vecIn = mathutils.VecIn // Check if []vec contains vec.
 
-type datapoint struct {
-	vec           []float64
-	payload       []byte
-	expires       time.Time
-	expireEnabled bool
-}
-
-func (dp *datapoint) Vec() []float64 { return dp.vec }
-
-func (dp *datapoint) Payload() []byte { return dp.payload }
-
-func (dp *datapoint) Expired() bool {
-	return dp.expireEnabled && time.Now().After(dp.expires)
-}
-
 // helper for creating a data point.
-func dp(v []float64, sleepUnits int) *datapoint {
-	_dp := datapoint{vec: v}
+func dp(v []float64, sleepUnits int) common.DataPoint {
+	_dp := common.DataPoint{Vec: v}
 
 	if sleepUnits > 0 {
-		_dp.expires = time.Now().Add(_SLEEPUNIT * time.Duration(sleepUnits))
-		_dp.expireEnabled = true
+		_dp.Expires = time.Now().Add(_SLEEPUNIT * time.Duration(sleepUnits))
+		_dp.ExpireEnabled = true
 	}
-	return &_dp
+	return _dp
 }
 
 func dps2Vecs(dps []common.DataPoint) [][]float64 {
 	res := make([][]float64, len(dps))
 	for i, dp := range dps {
-		res[i] = dp.Vec()
+		res[i] = dp.Vec
 	}
 	return res
 }
 
-func newCentroid(vec []float64) common.Centroid {
+func newCentroid(vec []float64) *centroid.Centroid {
 	args := centroid.NewCentroidArgs{
 		InitVec:       vec,
 		InitCap:       10,
@@ -121,14 +106,13 @@ func newCentroid(vec []float64) common.Centroid {
 	if !ok {
 		panic("couldn't setup Centroid")
 	}
-	return centroid
+	return &centroid
 }
 
-func newCentroidManager(vec []float64) *CentroidManager {
+func newCentroidManager(vec []float64) CentroidManager {
 	cm, ok := NewCentroidManager(NewCentroidManagerArgs{
 		InitVec:             vec,
 		InitCap:             0,
-		CentroidFactoryFunc: newCentroid,
 		CentroidDPThreshold: 10,
 		KNNSearchFunc:       _knnSearchFunc,
 		KFNSearchFunc:       _kfnSearchFunc,
@@ -160,7 +144,7 @@ func TestCentroidDataPointPortions(t *testing.T) {
 	c1.AddDataPoint(dp(vec(1), 0))
 	c2.AddDataPoint(dp(vec(1), 0))
 
-	cm.Centroids = []common.Centroid{c1, c2, c3}
+	cm.Centroids = []*centroid.Centroid{c1, c2, c3}
 	//	map should be:
 	//	{
 	//		0:2,				It's c1.
@@ -180,7 +164,7 @@ func TestCentroidVecGenerator(t *testing.T) {
 	cm := newCentroidManager(vec(0))
 	c1 := newCentroid(vec(1))
 	c2 := newCentroid(vec(2))
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 
 	gen := cm.centroidVecGenerator()
 
@@ -203,7 +187,7 @@ func TestCentroidVecGenerator(t *testing.T) {
 func TestSplitCentroid(t *testing.T) {
 	cm := newCentroidManager(vec(1))
 	c1 := newCentroid(vec(1))
-	cm.Centroids = []common.Centroid{c1}
+	cm.Centroids = []*centroid.Centroid{c1}
 
 	dps := []common.DataPoint{
 		dp(vec(0), 0),
@@ -217,6 +201,7 @@ func TestSplitCentroid(t *testing.T) {
 	}
 
 	c2, splitOK := cm.splitCentroid(0, 2)
+
 	if !splitOK {
 		t.Fatalf("didn't split")
 	}
@@ -255,9 +240,9 @@ func TestAddDataPointOldCentroids(t *testing.T) {
 	}
 
 	cm := newCentroidManager(vec(0, 0))
-	cm.Centroids = []common.Centroid{
-		newCentroid(dps[0].Vec()),
-		newCentroid(dps[1].Vec()),
+	cm.Centroids = []*centroid.Centroid{
+		newCentroid(dps[0].Vec),
+		newCentroid(dps[1].Vec),
 	}
 
 	for _, dp := range dps {
@@ -272,7 +257,8 @@ func TestAddDataPointOldCentroids(t *testing.T) {
 		if len(drain) == 0 {
 			t.Fatal("Kmeans.Centroids[x].Drain(...) func impl error")
 		}
-		if drain[0].Vec()[0] != c.Vec()[0] {
+
+		if !vecEq(drain[0].Vec, c.Vec()) {
 			t.Fatalf("centroid index %d got incorrect dp: %v\n", i, c)
 		}
 	}
@@ -289,7 +275,7 @@ func TestAddDataPointInternalVec(t *testing.T) {
 	c2 := newCentroid(vec(3, 2))
 
 	cm := newCentroidManager(vec(2, 2))
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 	cm.MoveVector()
 
 	cm.AddDataPoint(dp(vec(5, 5), 0))
@@ -312,7 +298,6 @@ func TestAddDataPointSplit(t *testing.T) {
 	cm, ok := NewCentroidManager(NewCentroidManagerArgs{
 		InitVec:             vec(0, 0),
 		InitCap:             0,
-		CentroidFactoryFunc: newCentroid,
 		CentroidDPThreshold: 2,
 		KNNSearchFunc:       searchutils.KNNCos,
 		KFNSearchFunc:       searchutils.KFNCos,
@@ -341,7 +326,7 @@ func TestDrainUnordered(t *testing.T) {
 	c1.AddDataPoint(dp(vec(3), 0)) // dp2.
 	c2.AddDataPoint(dp(vec(5), 0)) // dp3.
 
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 	cm.MoveVector() // For auto-adjusting vec test.
 
 	// dp 1 & 3 should be removed, as dp1 is first in c1
@@ -386,7 +371,7 @@ func TestDrainOrdered(t *testing.T) {
 	c1.AddDataPoint(dp(vec(1, 9), 0)) // dp4, Should be drained.
 	c2.AddDataPoint(dp(vec(5, 5), 0)) // dp5, Should be drained as well.
 
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 	cm.MoveVector() // For auto-adjusting vec test.
 
 	// The drain method tries to drain a uniform amount of dps from
@@ -434,7 +419,7 @@ func TestExpire(t *testing.T) {
 	c2.AddDataPoint(dp(vec(3), 0))
 
 	cm := newCentroidManager(vec(1))
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 	cm.MoveVector() // For auto-adjusting vec test.
 
 	sleep()
@@ -476,7 +461,7 @@ func TestMoveVector(t *testing.T) {
 	}
 
 	cm := newCentroidManager(vec(0, 0))
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 
 	cm.MoveVector()
 
@@ -524,13 +509,13 @@ func TestDistributeDataPoints(t *testing.T) {
 
 	// (1) c1 is internal, c2 is external.
 	cm := newCentroidManager(vec(0))
-	cm.Centroids = []common.Centroid{c1}
+	cm.Centroids = []*centroid.Centroid{c1}
 	cm.DistributeDataPoints(1, []common.DataPointReceiver{c2})
 	c1 = cm.Centroids[0] // Save before new cm.
 
 	// (2) c2 is internal, c1 is external.
 	cm = newCentroidManager(vec(0))
-	cm.Centroids = []common.Centroid{c2}
+	cm.Centroids = []*centroid.Centroid{c2}
 	cm.DistributeDataPoints(1, []common.DataPointReceiver{c1})
 	c2 = cm.Centroids[0] // Save again for easy readings.
 
@@ -579,7 +564,7 @@ func TestDistributeDataPointsInternal(t *testing.T) {
 	c2.AddDataPoint(dp(vec(1, 3), 0)) // dp8: closest to c1.
 
 	cm := newCentroidManager(vec(0))
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 
 	// This should move dps as specified above.
 	cm.DistributeDataPointsInternal(2)
@@ -618,7 +603,7 @@ func TestKNNLookupNoDrain(t *testing.T) {
 	c2.AddDataPoint(dp(vec(1, 7), 0)) // dp4
 
 	cm := newCentroidManager(vec(0, 0))
-	cm.Centroids = []common.Centroid{c1, c2}
+	cm.Centroids = []*centroid.Centroid{c1, c2}
 	cm.MoveVector() // For auto-adjusting vec test.
 
 	// vec(1, 5.7) is closest to dp3 in c2.
@@ -635,8 +620,8 @@ func TestKNNLookupNoDrain(t *testing.T) {
 	if len(dps) != 1 {
 		t.Fatalf("unexpected result len: %v (want 1)", len(dps))
 	}
-	if !vecEq(dps[0].Vec(), vec(1, 6)) { // vec(1,6)=dp3
-		t.Fatalf("unexpected result vec: %v", dps[0].Vec())
+	if !vecEq(dps[0].Vec, vec(1, 6)) { // vec(1,6)=dp3
+		t.Fatalf("unexpected result vec: %v", dps[0].Vec)
 	}
 
 	// Auto-adjust vec test.
@@ -653,7 +638,7 @@ func TestNearestCentroid(t *testing.T) {
 	c3 := newCentroid(vec(1, 4))
 
 	cm := newCentroidManager(vec(0, 0))
-	cm.Centroids = []common.Centroid{c1, c2, c3}
+	cm.Centroids = []*centroid.Centroid{c1, c2, c3}
 
 	centroids, ok := cm.NearestCentroids(vec(1, 5), 1, true) // nearest c3.
 	if !ok {
@@ -684,7 +669,7 @@ func TestSplit(t *testing.T) {
 		cm.AddDataPoint(dp)
 	}
 
-	cm.SplitCentroids(func(c common.Centroid) bool {
+	cm.SplitCentroids(func(c *centroid.Centroid) bool {
 		return c.LenDP() > 2
 	})
 	if len(cm.Centroids) != 2 {
@@ -714,10 +699,10 @@ func TestMergeCentroids(t *testing.T) {
 	c3.AddDataPoint(dp(vec(1, 7), 0))
 
 	cm := newCentroidManager(vec(0, 0))
-	cm.Centroids = []common.Centroid{c1, c2, c3}
+	cm.Centroids = []*centroid.Centroid{c1, c2, c3}
 	cm.MoveVector() // For auto-adjust vec test.
 
-	cm.MergeCentroids(func(c common.Centroid) bool {
+	cm.MergeCentroids(func(c *centroid.Centroid) bool {
 		// Merge condition for c3. So the nearest, c1, should
 		// be merged into it (c3).
 		return c.LenDP() == 2
