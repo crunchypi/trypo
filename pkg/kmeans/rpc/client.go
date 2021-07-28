@@ -1,3 +1,10 @@
+/*
+
+Client for RPC layer on top of pkg/kmeans/centroidmanager. Has most methods
+with an identical signature -- a few deviation exist due to limitations in
+Go (can't send closures or interfaces).
+
+*/
 package rpc
 
 import (
