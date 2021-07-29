@@ -16,6 +16,7 @@ type StatusCode = common.StatusCode
 
 // Abbreviation for func that sets up clients (orchestration of arbiterClient)
 var ArbiterClients = rpc.ArbiterClients
+var ArbiterClient = rpc.ArbiterClient
 
 // NewSessionMember creates an arbitration sessionmember.
 func NewSessionMember(localAddr Addr, allAddrs []Addr) *SessionMember {
