@@ -6,6 +6,19 @@ Server for RPC layer on top of pkg/kmeans/centroidmanager.
 */
 package rpc
 
+// Namespaces sends all namespaces stored in the server.
+func (s *KMeansServer) Namespaces(_ int, resp *[]string) error {
+	s.Table.Lock()
+	defer s.Table.Unlock()
+
+	r := make([]string, 0, 20) // 20 is arbitrary.
+	for key := range s.Table.slots {
+		r = append(r, key)
+	}
+	*resp = r
+	return nil
+}
+
 // Reduces some boilerplate by doing the '!lookupOK { ... } return nil' thing.
 func (s *KMeansServer) handleNamespaceErr(ns string, f func(*CentroidManager)) error {
 	lookupOK := s.Table.Access(ns, f)

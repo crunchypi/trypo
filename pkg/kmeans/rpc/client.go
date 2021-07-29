@@ -1,8 +1,8 @@
 /*
 
-Client for RPC layer on top of pkg/kmeans/centroidmanager. Has most methods
-with an identical signature -- a few deviation exist due to limitations in
-Go (can't send closures or interfaces).
+Client for RPC layer on top of pkg/kmeans/centroidmanager, mostly (a few extras
+are defined here as well). Has most methods with an identical signature -- a few
+deviation exist due to limitations in Go (can't send closures or interfaces).
 
 */
 package rpc
@@ -24,6 +24,17 @@ func (c *kmeansClient) client(taskF func(*rpc.Client)) {
 	}
 	defer client.Close()
 	taskF(client)
+}
+
+// Namespaces fetches all namespaces stored in remote server.
+func (c *kmeansClient) Namespaces() []string {
+	var resp []string
+
+	c.client(func(rc *rpc.Client) {
+		*c.err = rc.Call("KMeansServer.Namespaces", nil, &resp)
+	})
+
+	return resp
 }
 
 // Calls the method with the same name on a remote instance of T CentroidManager
