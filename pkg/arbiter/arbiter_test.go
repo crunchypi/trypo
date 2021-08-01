@@ -2,6 +2,7 @@ package arbiter
 
 import (
 	"testing"
+	"time"
 
 	"github.com/crunchypi/go-narb/apsa/common"
 	"github.com/crunchypi/go-narb/apsa/rpc"
@@ -18,7 +19,12 @@ func newNetwork(addrs []common.Addr) *network {
 		stopFuncs: make(map[common.Addr]func(), len(addrs)),
 	}
 	for _, addr := range addrs {
-		server := NewArbiterServer(addr, addrs)
+		server := NewArbiterServer(NewSessionMemberConfig{
+			LocalAddr:       addr,
+			Whitelist:       addrs,
+			SessionDuration: time.Second * 3,
+			ArbiterDuration: time.Second * 5,
+		})
 		// Func to call for stopping the server.
 		stopServerFunc, err := rpc.StartListen(server, addr)
 		if err != nil {
@@ -50,7 +56,7 @@ func TestClientsTryForceNewArbiter(t *testing.T) {
 
 	errors := make(ArbErrs)
 	statuses := make(ArbStats)
-	retries := 100
+	retries := 1000
 	ok := rpc.ArbiterClients(addrs, errors, statuses).TryForceNewArbiter(retries)
 
 	if addr, err := errors.CheckAll(); err != nil {
