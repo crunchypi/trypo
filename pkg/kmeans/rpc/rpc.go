@@ -123,6 +123,18 @@ type CManagerTable struct {
 	sync.Mutex
 }
 
+func (t *CManagerTable) Namespaces() []string {
+	t.Lock()
+	defer t.Unlock()
+
+	namespaces := make([]string, 0, len(t.slots))
+	for namespace := range t.slots {
+		namespaces = append(namespaces, namespace)
+	}
+
+	return namespaces
+}
+
 // Access does a concurrency safe access of the internal namespaced data in
 // CManagerTable, which can be done with one Goroutine per namespace.
 // Example:
