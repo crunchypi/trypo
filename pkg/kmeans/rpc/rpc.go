@@ -160,6 +160,9 @@ func (t *CManagerTable) AddSlot(namespace string, cms *CManagerSlot) bool {
 	return true
 }
 
+// CentroidManagerFactoryF is whatever creates a CentroidManager.
+type CentroidManagerFactoryF = func(vec []float64) *CentroidManager
+
 // KMeansServer is contains endpoint counterparts for kmeansClient (accessed
 // with KMeansClient(...)).
 type KMeansServer struct {
@@ -169,7 +172,19 @@ type KMeansServer struct {
 	Table *CManagerTable
 	// The server has functionality for creating new namespaced CentroidManager
 	// and will need a way of doing that.
-	CentroidManagerFactoryFunc func(vec []float64) *CentroidManager
+	CentroidManagerFactoryFunc CentroidManagerFactoryF
+}
+
+// NewKMeansServer sets up (but doesn't start) a new KMeansServer.
+func NewKMeansServer(addr string, f CentroidManagerFactoryF) *KMeansServer {
+	slots := make(map[string]*CManagerSlot)
+	table := CManagerTable{slots: slots}
+
+	return &KMeansServer{
+		addr:                       addr,
+		Table:                      &table,
+		CentroidManagerFactoryFunc: f,
+	}
 }
 
 // StartListen is a convenience func for starting one or more instances of
