@@ -123,6 +123,15 @@ type CManagerTable struct {
 	sync.Mutex
 }
 
+// Reset flushes the internal data.
+func (t *CManagerTable) Reset() {
+	t.Lock()
+	defer t.Unlock()
+
+	t.slots = make(map[string]*CManagerSlot)
+}
+
+// Namespaces returns all namespaces in the table.
 func (t *CManagerTable) Namespaces() []string {
 	t.Lock()
 	defer t.Unlock()
