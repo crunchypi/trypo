@@ -6,6 +6,8 @@ Server for RPC layer on top of pkg/kmeans/centroidmanager.
 */
 package rpc
 
+import "trypo/pkg/searchutils"
+
 // Namespaces sends all namespaces stored in the server.
 func (s *KMeansServer) Namespaces(_ int, resp *[]string) error {
 	s.Table.Lock()
@@ -121,6 +123,108 @@ func (s *KMeansServer) MoveVector(namespace string, resp *bool) error {
 	return s.handleNamespaceErr(namespace, func(cm *CentroidManager) {
 		*resp = cm.MoveVector()
 	})
+}
+
+type DistribDPArgs struct {
+	NameSpace   string
+	N           int
+	AddrOptions []string
+}
+
+// Try adding dp to any addr in addrs. addrs will ordered by (indexed into) using
+// gen and a knn search func (searchutils.KNNCos at the time of writing) so there
+// is some 'best-fit' involved. Returns false if dp isn't added anywhere.
+func distributeDP(dp DataPoint, gen vecGenerator, addrs []string, namespace string) bool {
+	for _, index := range searchutils.KNNCos(dp.Vec, gen, len(addrs)) {
+		client := KMeansClient(addrs[index], namespace, nil)
+		if client.AddDataPoint(dp) {
+			return true
+		}
+	}
+	return false
+}
+
+// DistributeDataPointsFast will try to distribute args.N datapoints in haste
+// (with some accuracy) from this node amongst 'best-fit' remote nodes listed
+// in args.AddrOptions (all within the same args.NameSpace). Specifically, this
+// node's CentroidManager with the given namespace will have its DrainOrdered
+// method called, then those dps will be sent to remote nodes that are most
+// similar to those dps (similarity is caluclated by remote CentroidManager.Vec()).
+func (s *KMeansServer) DistributeDataPointsFast(args DistribDPArgs, _ *int) error {
+	dps := make([]DataPoint, 0, args.N)
+
+	// Not wrapping the code below with this because it locks the CentroidManager.
+	nsErr := s.handleNamespaceErr(args.NameSpace, func(cm *CentroidManager) {
+		dps = append(dps, cm.DrainOrdered(args.N)...)
+	})
+
+	if nsErr != nil || len(dps) == 0 || len(args.AddrOptions) == 0 {
+		return nsErr
+	}
+
+	// Fetch remote vecs. Done outside of the dp loop (below) because these
+	// vecs are not assumed to change by a lot (they might, if those nodes
+	// have few dps, but the tradeoff is made nontheless).
+	rch := fetchVecs(args.AddrOptions, func(addr string) ([]float64, bool) {
+		var err error
+		vec := KMeansClient(addr, args.NameSpace, &err).Vec()
+		return vec, err == nil && vec != nil
+	})
+	rsl := rch.collect() // collect the chan.
+
+	addrs := rsl.intoAddrs()
+	for _, dp := range dps {
+		gen := rsl.intoVecGenerator()
+		if !distributeDP(dp, gen, addrs, args.NameSpace) {
+			// Put back into self so the dp isn't lost.
+			s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+				cm.AddDataPoint(dp)
+			})
+		}
+	}
+	return nil
+}
+
+// DistributeDataPointsAccurate is similar to DistributeDataPointsFast but is
+// slower and more accurate. The latter finds nodes that are most similar to
+// the drained datapoints by using KMeansClient(...).Vec() _once_ for each
+// address option, while this method uses KMeansClient(...).NearestCentroidVec(..)
+// (slower and more accurate method) for each dp and for each address option.
+// This is _a_lot_ slower due to many network calls, but has the benefit of
+// placing distribute dps precisely.
+func (s *KMeansServer) DistributeDataPointsAccurate(args DistribDPArgs, _ *int) error {
+	dps := make([]DataPoint, 0, args.N)
+
+	// Not wrapping the code below with this because it locks the CentroidManager.
+	nsErr := s.handleNamespaceErr(args.NameSpace, func(cm *CentroidManager) {
+		dps = append(dps, cm.DrainOrdered(args.N)...)
+	})
+
+	if nsErr != nil || len(dps) == 0 || len(args.AddrOptions) == 0 {
+		return nsErr
+	}
+
+	for _, dp := range dps {
+		// Fetch remote vecs. Done inside the loop, even though the dps might
+		// not vary much with their vecs, because this method trades speed for
+		// accuracy.
+		rch := fetchVecs(args.AddrOptions, func(addr string) ([]float64, bool) {
+			var err error
+			vec := KMeansClient(addr, args.NameSpace, &err).NearestCentroidVec(dp.Vec)
+			return vec, err == nil && vec != nil
+		})
+		rsl := rch.collect() // collect the chan.
+		gen := rsl.intoVecGenerator()
+
+		addrs := rsl.intoAddrs()
+		if !distributeDP(dp, gen, addrs, args.NameSpace) {
+			// Put back into self so the dp isn't lost.
+			s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+				cm.AddDataPoint(dp)
+			})
+		}
+	}
+	return nil
 }
 
 type DistribDPIArgs struct {

@@ -10,7 +10,6 @@ package rpc
 import (
 	"net/rpc"
 	"trypo/pkg/kmeans/centroid"
-	"trypo/pkg/kmeans/common"
 )
 
 // client tries to connect to a remote client with c.remoteAddr, give
@@ -138,65 +137,31 @@ func (c *kmeansClient) MoveVector() bool {
 	return resp
 }
 
-// DistributeDataPoints works with a similar intent as the method with the same name
-// on pkg/kmeans/centroidmanager.CentroidManager; it gets a slice of DataPoint from
-// a remote node (addr specified while setting up this client, calling DrainOrdered),
-// then adds them to 'best-fit' 'receivers'. 'best-fit' is calculated with a
-// similarity function that has to be configured with the KNNSearchFunc field on
-// this kmeansClient (a default exists, configured with cosine similarity).
-func (c *kmeansClient) DistributeDataPoints(n int, receivers []common.DataPointReceiver) {
-	if receivers == nil || len(receivers) == 0 {
-		return
-	}
-	// Drain data from distributer.
-	data := c.DrainOrdered(n)
-
-	// Get vectors from receivers. It is assumed here that receivers are actually
-	// concrete kmeansClient instances, and their vecs are gathered here. This is
-	// because these vectors will potentially be fetched multiple times (see
-	// block after 'generator' definition, where the loop resets the generator)
-	// so it's probably a good idea to do caching for minimal network activity.
-	rcvVecs := make([][]float64, len(receivers))
-
-	// index correlation between 'receivers' and rcvVecs for convenience.
-	type rcvResp struct {
-		vec []float64
-		i   int
-	}
-
-	ch := make(chan rcvResp, len(receivers))
-	// Fetch.
-	for i := 0; i < len(receivers); i++ {
-		go func(i int) {
-			ch <- rcvResp{vec: receivers[i].Vec(), i: i}
-		}(i)
-	}
-	// Collect.
-	for i := 0; i < len(receivers); i++ {
-		resp := <-ch
-		rcvVecs[resp.i] = resp.vec
-	}
-
-	// The generator, it might reset multiple times, which
-	// is the reason for fetching the vecs above.
-	i := 0
-	generator := func() ([]float64, bool) {
-		if i >= len(rcvVecs) {
-			return nil, false
-		}
-		i++
-		return rcvVecs[i-1], true
-	}
-
+// DistributeDataPointsFast will try to distribute n datapoints in haste (with
+// some accuracy) from _this_ node (specified while setting up this client)
+// amongst _other_ 'best-fit' nodes listed in 'addrs'. The CentroidManager
+// in _this_ node will have its DrainOrdered method called, then those dps
+// will be sent to _other_ nodes that are most similar to the dps (similarity
+// is derived from CentroidManager.Vec() on _other_ nodes). Note, all of this
+// is done within the same namespace that was used while setting up this client.
+func (c *kmeansClient) DistributeDataPointsFast(addrs []string, n int) {
 	c.client(func(rc *rpc.Client) {
-		for j := 0; j < len(data); j++ {
-			i = 0 // Reset generator.
-			indexes := c.KNNSearchFunc(data[j].Vec, generator, 1)
-			// Put back into self if (1) search failed or (2) adder failed to add.
-			if len(indexes) == 0 || !receivers[indexes[0]].AddDataPoint(data[j]) {
-				c.AddDataPoint(data[j])
-			}
-		}
+		args := DistribDPArgs{NameSpace: c.namespace, N: n, AddrOptions: addrs}
+		*c.err = rc.Call("KMeansServer.DistributeDataPointsFast", args, nil)
+	})
+}
+
+// DistributeDataPointsAccurate is similar to DistributeDataPointsFast but is
+// slower and more accurate. The latter finds nodes that are most similar to
+// the drained datapoints by using KMeansClient(...).Vec() _once_ for each
+// address option, while this method uses KMeansClient(...).NearestCentroidVec(..)
+// (slower and more accurate method) for each dp and for each address option.
+// This is _a_lot_ slower due to many network calls, but has the benefit of
+// placing distribute dps precisely.
+func (c *kmeansClient) DistributeDataPointsAccurate(addrs []string, n int) {
+	c.client(func(rc *rpc.Client) {
+		args := DistribDPArgs{NameSpace: c.namespace, N: n, AddrOptions: addrs}
+		*c.err = rc.Call("KMeansServer.DistributeDataPointsAccurate", args, nil)
 	})
 }
 
