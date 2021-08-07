@@ -323,3 +323,49 @@ func (s *KMeansServer) MergeCentroids(args SplitCentroidsArgs, _ *int) error {
 		})
 	})
 }
+
+type StealCentroidArgs struct {
+	FromAddr  string
+	NameSpace string
+	// Will steal Centroids until the total DP amount exceeds this.
+	TransferDPLimit int
+}
+
+type StealCentroidsResp struct {
+	TransferredN int
+	OK           bool
+}
+
+// StealCentroids will 'steal' one or more Centroid from a remote node, intended for
+// load balancing. It will keep 'stealing' _whole_ Centroids until the total amount
+// of datapoints exceeds args.TransferDPLimit (this value might therefore be greatly
+// overshot), using KMeansClient().NearestCentroids(vec), where vec is the vector
+// of CentroidManager for this node and namespace. The response 'r' will have
+// different implied meanings:
+//	- TransferredN = 0 & OK = false : remote node err (namespace or network issue).
+//	- TransferredN > 0 & OK = false : Some Centroids transferred before network err.
+//	- TransferredN = 0 & OK = true : No network err but remote is empty.
+//	- TransferredN > 0 & OK = true : all ok.
+func (s *KMeansServer) StealCentroid(args StealCentroidArgs, r *StealCentroidsResp) error {
+	r.OK = true
+	return s.handleNamespaceErr(args.NameSpace, func(cm *CentroidManager) {
+		var err error
+		client := KMeansClient(args.FromAddr, args.NameSpace, &err)
+		for r.TransferredN < args.TransferDPLimit {
+			// Can be improved. One at a time for convenience + readability.
+			centroids, cOK := client.NearestCentroids(cm.Vec(), 1, true)
+
+			if err != nil {
+				r.OK = true
+				return
+			}
+			if !cOK || len(centroids) == 0 {
+				return
+			}
+			// @ unsafe, this is assuming cm has similar properties as centroids
+			// @ (such as KNNSearchfunc, etc).
+			cm.Centroids = append(cm.Centroids, centroids...)
+			r.TransferredN += centroids[0].LenDP()
+		}
+	})
+}

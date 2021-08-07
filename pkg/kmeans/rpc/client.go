@@ -289,3 +289,34 @@ func (c *kmeansClient) MergeCentroids(dpRangeMin, dpRangeMax int) {
 		*c.err = rc.Call("KMeansServer.MergeCentroids", args, nil)
 	})
 }
+
+// StealCentroids will 'steal' one or more Centroid from a remote node, intended for
+// load balancing. If A=(the node contacted with this method) and B=(the node which
+// A steals from, with addr 'fromAddr'), then A will keep 'stealing' _whole_
+// Centroids from B until the total amount of transferred datapoints exceeds
+// 'transferLimit' (this value might therefore be greatly overshot), using
+// KMeansClient(...).NearestCentroid(vec), where vec is the vector of CentroidManager
+// in A with the supplied namespace. The response is a bool and an int, where the
+// former represents total amount of datapoints transferred, while the latter
+// indicates whether or not there was a network/namespace issue between A & B.
+// The configuration of the int and bool have these implied meanings:
+//	- int = 0 & bool = false : remote node err (namespace or network issue).
+//	- int > 0 & bool = false : Some Centroids transferred before network err.
+//	- int = 0 & bool = true : No network err but remote is empty.
+//	- int > 0 & bool = true : all ok.
+func (c *kmeansClient) StealCentroids(fromAddr string, transferLimit int) (int, bool) {
+	var n int
+	var ok bool
+	c.client(func(rc *rpc.Client) {
+		args := StealCentroidArgs{
+			FromAddr:        fromAddr,
+			NameSpace:       c.namespace,
+			TransferDPLimit: transferLimit,
+		}
+		resp := StealCentroidsResp{}
+		*c.err = rc.Call("KMeansServer.StealCentroid", args, &resp)
+		n = resp.TransferredN
+		ok = resp.OK
+	})
+	return n, ok
+}

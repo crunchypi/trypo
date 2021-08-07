@@ -866,6 +866,53 @@ func TestMergeCentroids(t *testing.T) {
 	}
 }
 
+func TestStealCentroids(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+
+	c1 := newCentroid(vec(1, 1))
+	c1.DataPoints = []DataPoint{
+		dp(vec(1, 1), 0),
+		dp(vec(1, 1), 0),
+	}
+
+	c2 := newCentroid(vec(1, 3))
+	c2.DataPoints = []DataPoint{
+		dp(vec(1, 1), 0),
+		dp(vec(1, 1), 0),
+	}
+
+	cm1 := newCentroidManager(vec(1, 1)) // Stolen from.
+	cm1.Centroids = []*Centroid{c1, c2}
+	network.nodes[addrs[1]].Table.AddSlot(namespace, &CManagerSlot{cManager: cm1})
+
+	// Vec here is closest to c2.
+	cm2 := newCentroidManager(vec(1, 3)) // Stealer.
+	network.nodes[addrs[0]].Table.AddSlot(namespace, &CManagerSlot{cManager: cm2})
+
+	// Validate.
+	var err error
+	client := KMeansClient(addrs[0], namespace, &err)
+	n, ok := client.StealCentroids(addrs[1], 2)
+
+	if err != nil {
+		t.Fatalf("net err for %v: %v", addrs[0], err)
+	}
+	if !ok {
+		t.Fatal("got false from call StealCentroids call")
+	}
+	if n != 2 {
+		t.Fatalf("unexpected total dp transfer. want %v, got %v", 2, n)
+	}
+	if len(cm1.Centroids) != 1 {
+		t.Fatalf("unexpected centroid amt in c1: want %v, have %v", 1, len(cm1.Centroids))
+	}
+	if len(cm2.Centroids) != 1 {
+		t.Fatalf("unexpected centroid amt in c1: want %v, have %v", 1, len(cm2.Centroids))
+	}
+}
+
 // NOTE: Have this at the bottom of this file for cleanup.
 func TestCleanup(t *testing.T) {
 	network.stop()
