@@ -30,7 +30,7 @@ func (c *kmeansClient) Namespaces() []string {
 	var resp []string
 
 	c.client(func(rc *rpc.Client) {
-		*c.err = rc.Call("KMeansServer.Namespaces", nil, &resp)
+		*c.err = rc.Call("KMeansServer.Namespaces", 0, &resp)
 	})
 
 	return resp

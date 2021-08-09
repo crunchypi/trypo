@@ -194,7 +194,7 @@ func (tn *tNetwork) unwrap(addr, namespace string) *CentroidManager {
 }
 
 // One address per node in a tNetwork instance (next var).
-var addrs = []addr{"localhost:3000", "localhost:3001", "localhost:3002"}
+var addrs = []addr{"localhost:3001", "localhost:3002", "localhost:3003"}
 
 // A test network for all tests, this should be cleaned in each test,
 // so use 'defer network.reset()' or something like that. It is
@@ -210,6 +210,32 @@ func init() {
 Section for actual tests.
 --------------------------------------------------------------------------------
 */
+
+func TestNamespaces(t *testing.T) {
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	vec1 := vec(3, 4)
+	slot := CManagerSlot{cManager: newCentroidManager(vec1)}
+	network.nodes[addr].Table.slots[namespace] = &slot
+
+	var err error
+	ns := KMeansClient(addr, namespace, &err).Namespaces()
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+
+	if len(ns) != 1 {
+		t.Errorf("unexpected namespace count: %v", len(ns))
+	}
+
+	if ns[0] != namespace {
+		t.Errorf("unexpected namespace: %v", ns[0])
+	}
+
+}
 
 func TestVec(t *testing.T) {
 	// Boilerplate.
