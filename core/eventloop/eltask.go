@@ -40,8 +40,7 @@ func withLocalAddrNamespaces(cfg *EventLoopConfig, task func(addr Addr, namespac
 func eltExpire(cfg *EventLoopConfig) {
 	withSkip(cfg, cfg.TaskSkip.Expire, func() {
 		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
-			s := "[%v (ns '%v')] | task: expire"
-			cfg.L.LogTask(fmt.Sprintf(s, addr.ToStr(), namespace))
+			cfg.L.LogTask(fmt.Sprintf("(ns '%v') expire", namespace))
 
 			go rpc.KMeansClient(addr.ToStr(), namespace, nil).Expire()
 		})
@@ -53,8 +52,7 @@ func eltExpire(cfg *EventLoopConfig) {
 func eltMemTrim(cfg *EventLoopConfig) {
 	withSkip(cfg, cfg.TaskSkip.MemTrim, func() {
 		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
-			s := "[%v (ns '%v')] | task: memtrim"
-			cfg.L.LogTask(fmt.Sprintf(s, addr.ToStr(), namespace))
+			cfg.L.LogTask(fmt.Sprintf("(ns '%v') memtrim", namespace))
 
 			go rpc.KMeansClient(addr.ToStr(), namespace, nil).MemTrim()
 		})
@@ -67,8 +65,7 @@ func eltDistributeDataPointsFast(cfg *EventLoopConfig) {
 	withSkip(cfg, cfg.TaskSkip.DistributeDataPointsFast, func() {
 		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
 			withNamespaceTable(cfg, func(table addrNamespaceTable) {
-				s := "[%v (ns '%v')] | task: distri fast"
-				cfg.L.LogTask(fmt.Sprintf(s, addr.ToStr(), namespace))
+				cfg.L.LogTask(fmt.Sprintf("(ns '%v') distri fast", namespace))
 
 				// Addrs for this local namespace.
 				addrs := make([]string, len(table.items[namespace]))
@@ -90,8 +87,7 @@ func eltDistributeDataPointsAccurate(cfg *EventLoopConfig) {
 	withSkip(cfg, cfg.TaskSkip.DistributeDataPointsAccurate, func() {
 		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
 			withNamespaceTable(cfg, func(table addrNamespaceTable) {
-				s := "[%v (ns '%v')] | task: distri accurate"
-				cfg.L.LogTask(fmt.Sprintf(s, addr.ToStr(), namespace))
+				cfg.L.LogTask(fmt.Sprintf("(ns '%v') distri accurate", namespace))
 
 				// Addrs for this local namespace.
 				addrs := make([]string, len(table.items[namespace]))
@@ -112,8 +108,7 @@ func eltDistributeDataPointsAccurate(cfg *EventLoopConfig) {
 func eltDistributeDataPointsInternal(cfg *EventLoopConfig) {
 	withSkip(cfg, cfg.TaskSkip.DistributeDataPointsInternal, func() {
 		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
-			s := "[%v (ns '%v')] | task: distri internal"
-			cfg.L.LogTask(fmt.Sprintf(s, addr.ToStr(), namespace))
+			cfg.L.LogTask(fmt.Sprintf("(ns '%v') distri internal", namespace))
 
 			client := rpc.KMeansClient(addr.ToStr(), namespace, nil)
 			n := cfg.DistributeDataPointsInternalN
@@ -127,8 +122,7 @@ func eltDistributeDataPointsInternal(cfg *EventLoopConfig) {
 func eltSplitCentroids(cfg *EventLoopConfig) {
 	withSkip(cfg, cfg.TaskSkip.SplitCentroids, func() {
 		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
-			s := "[%v (ns '%v')] | task: splitting"
-			cfg.L.LogTask(fmt.Sprintf(s, addr.ToStr(), namespace))
+			cfg.L.LogTask(fmt.Sprintf("(ns '%v') splitting", namespace))
 
 			client := rpc.KMeansClient(addr.ToStr(), namespace, nil)
 			go client.SplitCentroids(cfg.SplitCentroidsMin, cfg.SplitCentroidsMax)
@@ -141,8 +135,7 @@ func eltSplitCentroids(cfg *EventLoopConfig) {
 func eltMergeCentroids(cfg *EventLoopConfig) {
 	withSkip(cfg, cfg.TaskSkip.MergeCentroids, func() {
 		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
-			s := "[%v (ns '%v')] | task: merging"
-			cfg.L.LogTask(fmt.Sprintf(s, addr.ToStr(), namespace))
+			cfg.L.LogTask(fmt.Sprintf("(ns '%v') merging", namespace))
 
 			client := rpc.KMeansClient(addr.ToStr(), namespace, nil)
 			go client.MergeCentroids(cfg.MergeCentroidsMin, cfg.MergeCentroidsMax)
@@ -150,7 +143,7 @@ func eltMergeCentroids(cfg *EventLoopConfig) {
 	})
 }
 
-// Event-loop task for load balancing (from remotes to local node). It tries
+// Event-loop task for load balancing (from local node to remotes). It tries
 // to transfer _whole_ Centroids from remote nodes to local node, based on
 // the mean/average amount of DPs globally (so not necassarily based on
 // byte amounts). The condition for transferring is if the local node has
@@ -186,8 +179,8 @@ func eltLoadBalancing(cfg *EventLoopConfig) {
 
 					n, _ := client.StealCentroids(other.ToStr(), transferDPN)
 
-					s := "[%v (ns '%v')] | task: load balancing -> %v (n=%v)"
-					s = fmt.Sprintf(s, addr.ToStr(), namespace, other.ToStr(), n)
+					s := "(ns '%v') load balancing -> %v (n=%v)"
+					s = fmt.Sprintf(s, namespace, other.ToStr(), n)
 					cfg.L.LogTask(s)
 
 					// Update table.
@@ -198,5 +191,27 @@ func eltLoadBalancing(cfg *EventLoopConfig) {
 
 			})
 		})
+	})
+}
+
+func eltMeta(cfg *EventLoopConfig) {
+	withSkip(cfg, 1, func() {
+		metaData := MetaData{Items: make(map[Addr]MetaDataItem)}
+		pullFrom := make([]Addr, 0, len(cfg.RemoteAddrs))
+
+		if cfg.LogLocalOnly {
+			pullFrom = append(pullFrom, cfg.LocalAddr)
+		} else {
+			pullFrom = append(pullFrom, cfg.RemoteAddrs...)
+		}
+
+		for _, addr := range pullFrom {
+			meta := rpc.KMeansClient(addr.ToStr(), "", nil).Meta()
+			metaData.Items[addr] = MetaDataItem{
+				LenDP:        meta.DPs,
+				LenCentroids: meta.Centroids,
+			}
+		}
+		cfg.L.LogMeta(metaData)
 	})
 }
