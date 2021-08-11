@@ -320,3 +320,12 @@ func (c *kmeansClient) StealCentroids(fromAddr string, transferLimit int) (int, 
 	})
 	return n, ok
 }
+
+// Meta fetches metadata from the node.
+func (c *kmeansClient) Meta() MetaResp {
+	r := MetaResp{}
+	c.client(func(rc *rpc.Client) {
+		*c.err = rc.Call("KMeansServer.Meta", 0, &r)
+	})
+	return r
+}

@@ -371,3 +371,36 @@ func (s *KMeansServer) StealCentroid(args StealCentroidArgs, r *StealCentroidsRe
 		}
 	})
 }
+
+// MetaResp is metadata for a node. Contains two fiels, both are maps where keys
+// are namespaces. Vals for 'Centroids' is the total amount of Centroids for the
+// namespace. Likewise, DPs is the total amount of datapoints for a namespace.
+type MetaResp struct {
+	Centroids map[string]int
+	DPs       map[string]int
+}
+
+// Meta returns metadata for a node.
+func (s *KMeansServer) Meta(_ int, resp *MetaResp) error {
+	s.Table.Lock()
+	namespaces := make([]string, 0, len(s.Table.slots))
+	for key := range s.Table.slots {
+		namespaces = append(namespaces, key)
+	}
+	s.Table.Unlock()
+
+	centroids := make(map[string]int, len(namespaces))
+	dps := make(map[string]int, len(namespaces))
+
+	for _, ns := range namespaces {
+		s.Table.Access(ns, func(cm *CentroidManager) {
+			centroids[ns] = len(cm.Centroids)
+			dps[ns] = cm.LenDP()
+		})
+	}
+
+	(*resp).Centroids = centroids
+	(*resp).DPs = dps
+
+	return nil
+}
