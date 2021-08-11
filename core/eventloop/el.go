@@ -1,11 +1,36 @@
 package eventloop
 
 import (
+	"fmt"
 	"time"
 	"trypo/pkg/arbiter"
 )
 
 type Addr = arbiter.Addr
+
+type Logger interface {
+	LogTask(string)
+	LogMeta(MetaData)
+}
+
+type MetaDataItem struct {
+	LenDP        map[string]int
+	LenCentroids map[string]int
+}
+
+type MetaData struct {
+	Items map[Addr]MetaDataItem
+}
+
+type defaultLogger struct {
+	localOnly bool
+	localAddr Addr
+	metaData  MetaData
+}
+
+func (l *defaultLogger) LogTask(s string) { fmt.Println(s) }
+
+func (l *defaultLogger) LogMeta(m MetaData) {}
 
 // Each task in the event loop will be skippable such that not everything has
 // to run in each loop iteration. This is useful when some tasks are recource
@@ -133,6 +158,8 @@ type EventLoopConfig struct {
 	// in which centroids will be merged.
 	MergeCentroidsMax int
 
+	L Logger
+
 	// Added by event loop.
 	internal eventLoopInternal
 }
@@ -149,13 +176,18 @@ func elStep(cfg *EventLoopConfig, task func(*EventLoopConfig)) {
 	if cfg.internal.stopped {
 		return
 	}
-
 	task(cfg)
 }
 
 func EventLoop(cfg *EventLoopConfig) func() {
 	if cfg == nil {
 		panic("nil eventloop cfg")
+	}
+	if cfg.L == nil {
+		cfg.L = &defaultLogger{
+			localOnly: true,
+			localAddr: cfg.LocalAddr,
+		}
 	}
 
 	cfg.TaskSkip.clamp(1, 1000)
@@ -164,6 +196,18 @@ func EventLoop(cfg *EventLoopConfig) func() {
 		// Note: tasks are _not_ arbitrarily ordered.
 		for cfg.internal.stopped == false {
 			time.Sleep(cfg.TimeoutLoop)
+
+			elStep(cfg, eltExpire)
+			elStep(cfg, eltMemTrim)
+
+			elStep(cfg, eltMergeCentroids)
+			elStep(cfg, eltSplitCentroids)
+
+			elStep(cfg, eltDistributeDataPointsInternal)
+			elStep(cfg, eltDistributeDataPointsFast)
+			elStep(cfg, eltDistributeDataPointsAccurate)
+
+			elStep(cfg, eltLoadBalancing)
 
 			// Tick & wraparound.
 			cfg.internal.iter++
