@@ -80,6 +80,7 @@ type eventLoopInternal struct {
 	iter    int
 }
 
+// EventLoopConfig is a config type for the event loop in this pkg.
 type EventLoopConfig struct {
 	LocalAddr Addr
 	// All addresses in the network, should include LocalAddr.
@@ -128,8 +129,21 @@ type EventLoopConfig struct {
 	// in which centroids will be merged.
 	MergeCentroidsMax int
 
+	// The logger interface in this pkg has two methods, on of them
+	// (named 'LogMeta') receves a MetaData type as arg, which has
+	// some metadata for nodes. This metadata is pulled from the
+	// network -- if this field LogLocalOnly=true, then data is only
+	// pulled from the local node (with addr 'LocalAddr', which is
+	// set in this config type). If LogLocalOnly=false, then metadata
+	// is pulled from the entire network (addrs in 'RemoteAddrs', also
+	// defined in this config type). Also see docs for Logger interface
+	// and MetaData type.
 	LogLocalOnly bool
-	L            Logger
+	// Logger for the event loop. See docs for Logger interface. If nil,
+	// then this field is set as a default logger in this pkg, it'll simply
+	// log events in the terminal. At the moment of writing, the default
+	// logger is only compatible with unix-based systems.
+	L Logger
 
 	// Added by event loop.
 	internal eventLoopInternal
