@@ -155,6 +155,10 @@ func eltLoadBalancing(cfg *EventLoopConfig) {
 			withNamespaceTable(cfg, func(table addrNamespaceTable) {
 				addrs := table.addrsWithNamespace(namespace)
 				addrsLens := fetchRemoteLenDPs(addrs, namespace)
+				// Prevent zero div.
+				if len(addrs) == 0 || len(addrsLens) == 0 {
+					return
+				}
 
 				dpTotal := 0
 				for _, dpLen := range addrsLens {
