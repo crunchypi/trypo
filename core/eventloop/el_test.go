@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"sync"
 	"testing"
 	"time"
 	"trypo/core/dps"
@@ -30,20 +31,41 @@ var g_addrs = []Addr{
 	{"localhost", "3002"},
 	{"localhost", "3003"},
 	{"localhost", "3004"},
-	{"localhost", "3005"},
+	//{"localhost", "3005"},
+	//{"localhost", "3006"},
+	//{"localhost", "3007"},
+	//{"localhost", "3008"},
+	//{"localhost", "3009"},
+	//{"localhost", "3010"},
+	//{"localhost", "3011"},
+	//{"localhost", "3012"},
+	//{"localhost", "3013"},
+	//{"localhost", "3014"},
+	//{"localhost", "3015"},
+	//{"localhost", "3016"},
+	//{"localhost", "3017"},
+	//{"localhost", "3018"},
+	//{"localhost", "3019"},
+	//{"localhost", "3020"},
+	//{"localhost", "3021"},
+	//{"localhost", "3022"},
+	//{"localhost", "3023"},
+	//{"localhost", "3024"},
+	//{"localhost", "3025"},
 }
+
 var g_namespace = "test"
 var g_network = testutils.NewTNetwork(g_addrs)
 
 // How long the monitoring will last.
-var g_testSeconds = 60
+var g_testSeconds = 60 * 9 // Test timeout panic at 10m.
 
 // DataPoint details (for standardising).
-var g_dpDim = 30                     // dp dimension.
-var g_dpVecMin = 0.1                 // min vec value.
-var g_dpVecMax = 1.0                 // max vec value.
-var g_dpExpireSecMin = 10            // min dp expiration after creation.
-var g_dpExpireSecMax = g_testSeconds // max dp expiration after creation.
+var g_dpDim = 30                         // dp dimension.
+var g_dpVecMin = 0.1                     // min vec value.
+var g_dpVecMax = 1.0                     // max vec value.
+var g_dpExpireSecMin = g_testSeconds / 2 // min dp expiration after creation.
+var g_dpExpireSecMax = g_testSeconds     // max dp expiration after creation.
 
 // This is intended for monitoring accuracy of the system. Dps are put here
 // before the monitoring is started, then added to all nodes randomly (ish).
@@ -51,7 +73,7 @@ var g_dpExpireSecMax = g_testSeconds // max dp expiration after creation.
 // can then be used to query nodes and measure accuracy. At the moment of
 // writing, the accuracy measurement is done in the 'pollAccuracy' method of
 // tMonitor.
-var g_dpN = 1000
+var g_dpN = 500
 var g_dps = make([]common.DataPoint, 0, g_dpN)
 
 /*
@@ -117,6 +139,7 @@ type tMonitor struct {
 	namespace string
 	network   testutils.TNetwork
 
+	sync.Mutex
 	metaData map[Addr]MetaData
 	taskData map[Addr]string
 
@@ -151,7 +174,7 @@ func (m *tMonitor) pollAccuracy() {
 	// even though there are not network issues (like 99% sure), the
 	// assumed reason is timeouts due to heavy network loads.
 
-	if len(dpsFast) != 1 && len(dpsAccurate) != 1 {
+	if len(dpsFast) == 0 || len(dpsAccurate) == 0 {
 		//panic("failed to poll accuracy")
 		return
 	}
@@ -175,6 +198,9 @@ func (m *tMonitor) pollAccuracy() {
 // Printout of monitor stuff. Kinda similar to defaultLogger.LogTask in ./log.go
 // but puts the task description besides all nodes.
 func (m *tMonitor) Refresh() {
+	m.Lock()
+	defer m.Unlock()
+
 	fmt.Println()
 	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
@@ -219,9 +245,17 @@ type tLogger struct {
 	monitor *tMonitor
 }
 
-func (l *tLogger) LogMeta(m MetaData) { l.monitor.metaData[l.addr] = m }
+func (l *tLogger) LogMeta(m MetaData) {
+	l.monitor.Lock()
+	defer l.monitor.Unlock()
+	l.monitor.metaData[l.addr] = m
+}
 
-func (l *tLogger) LogTask(s string) { l.monitor.taskData[l.addr] = s }
+func (l *tLogger) LogTask(s string) {
+	l.monitor.Lock()
+	defer l.monitor.Unlock()
+	l.monitor.taskData[l.addr] = s
+}
 
 func cfg(addr Addr, addrs []Addr, m *tMonitor) *EventLoopConfig {
 
@@ -304,7 +338,7 @@ func TestMonitor(t *testing.T) {
 
 	}
 
-	stopTime := time.Now().Add(time.Second * 60)
+	stopTime := time.Now().Add(time.Second * time.Duration(g_testSeconds))
 	for {
 		time.Sleep(time.Millisecond * 100)
 		if time.Now().After(stopTime) {
