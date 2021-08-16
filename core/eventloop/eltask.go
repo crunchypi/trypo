@@ -150,50 +150,64 @@ func eltMergeCentroids(cfg *EventLoopConfig) {
 // a below-average amount of dps, and the receiver has an above-average
 // amount of dps -- even after loosing the sent data.
 func eltLoadBalancing(cfg *EventLoopConfig) {
+	// NOTE: Some of the constants below, specifically 'margin' and
+	// how 'transferDPN' is divided, are arbitrary but seem to work
+	// after doing some experimentation (using the monitor in the
+	// test file ./el_test.go).
 	withSkip(cfg, cfg.TaskSkip.LoadBalancing, func() {
-		withLocalAddrNamespaces(cfg, func(addr Addr, namespace string) {
-			withNamespaceTable(cfg, func(table addrNamespaceTable) {
-				addrs := table.addrsWithNamespace(namespace)
-				addrsLens := fetchRemoteLenDPs(addrs, namespace)
-				// Prevent zero div.
-				if len(addrs) == 0 || len(addrsLens) == 0 {
-					return
-				}
+		withNamespaceTable(cfg, func(table addrNamespaceTable) {
+			for _, ns := range table.namespaces() {
+				addrs := table.addrsWithNamespace(ns)
+				addrsLens := fetchRemoteLenDPs(addrs, ns)
+
+				local := cfg.LocalAddr // Abbreviation.
 
 				dpTotal := 0
 				for _, dpLen := range addrsLens {
 					dpTotal += dpLen
 				}
 				dpMean := dpTotal / len(addrsLens)
+				// Prevent a situation where nodes always move data.
+				margin := int(float64(dpMean) * 0.4)
 
-				client := rpc.KMeansClient(addr.ToStr(), namespace, nil)
+				client := rpc.KMeansClient(local.ToStr(), ns, nil)
+
 				for other, otherLen := range addrsLens {
-					if addrsLens[addr] > dpMean {
-						return
+					// For clarity; data flow goes only from other nodes to local node.
+					if local.Comp(other) || addrsLens[local] > dpMean {
+						continue
 					}
 
-					// '/n len(addrs)' for attempted even distribution.
-					transferDPN := (dpMean - addrsLens[addr]) / len(addrs)
+					// No point in getting any data if local is above average.
+					if addrsLens[local] > dpMean-margin {
+						continue
+					}
+
+					// '/n len(cfg.RemoteAddrs)' for attempted even distribution.
+					transferDPN := (dpMean - addrsLens[local]) / len(cfg.RemoteAddrs)
+					// Transferring in even smaller steps, especially since
+					// client.StealCetroids has a tendency to overshoot the
+					// amount of dps transferred (since Centroids are sent whole).
+					transferDPN /= 3
+
 					// No point in transferring if this would put 'other' below
-					// mean. 'addr' and 'other' comparison isn't strictly needed
-					// due to the arithmetic but still, juuuust in case...
-					if addr.Comp(other) || otherLen-transferDPN < dpMean {
+					// mean -- unless it's the only one that has anything for
+					// that namespace.
+					if otherLen-transferDPN < dpMean+margin && len(addrs) != 1 {
 						continue
 					}
 
 					n, _ := client.StealCentroids(other.ToStr(), transferDPN)
 
-					s := "(ns '%v') load balancing -> %v (n=%v)"
-					s = fmt.Sprintf(s, namespace, other.ToStr(), n)
+					s := "(ns '%v') load balancing (want %v dps, got %v from %v)"
+					s = fmt.Sprintf(s, ns, transferDPN, n, other.ToStr())
 					cfg.L.LogTask(s)
 
 					// Update table.
-					addrsLens[addr] = addrsLens[addr] + n
+					addrsLens[local] = addrsLens[local] + n
 					addrsLens[other] = addrsLens[other] - n
-
 				}
-
-			})
+			}
 		})
 	})
 }

@@ -304,6 +304,8 @@ func (c *kmeansClient) MergeCentroids(dpRangeMin, dpRangeMax int) {
 //	- int > 0 & bool = false : Some Centroids transferred before network err.
 //	- int = 0 & bool = true : No network err but remote is empty.
 //	- int > 0 & bool = true : all ok.
+// Note, cannot return a NamespaceErr, as a new namespace will be created if node
+// A does not have that namespace.
 func (c *kmeansClient) StealCentroids(fromAddr string, transferLimit int) (int, bool) {
 	var n int
 	var ok bool

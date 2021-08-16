@@ -348,28 +348,53 @@ type StealCentroidsResp struct {
 //	- TransferredN > 0 & OK = false : Some Centroids transferred before network err.
 //	- TransferredN = 0 & OK = true : No network err but remote is empty.
 //	- TransferredN > 0 & OK = true : all ok.
+// Note, cannot return a NamespaceErr, as a new namespace will be created if node
+// A does not have that namespace.
 func (s *KMeansServer) StealCentroid(args StealCentroidArgs, r *StealCentroidsResp) error {
-	r.OK = true
-	return s.handleNamespaceErr(args.NameSpace, func(cm *CentroidManager) {
-		var err error
-		client := KMeansClient(args.FromAddr, args.NameSpace, &err)
-		for r.TransferredN < args.TransferDPLimit {
-			// Can be improved. One at a time for convenience + readability.
-			centroids, cOK := client.NearestCentroids(cm.Vec(), 1, true)
+	// Not wrapping the code below with this because it locks the CentroidManager
+	// just for this one thing (getting a vec).
+	var localVec []float64
+	s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		localVec = cm.Vec()
+	})
 
-			if err != nil {
-				r.OK = true
-				return
-			}
-			if !cOK || len(centroids) == 0 {
-				return
-			}
+	var clientErr error
+	client := KMeansClient(args.FromAddr, args.NameSpace, &clientErr)
+
+	// This is sort of the same as namespace err check; here, it is set to the same
+	// vec as the node that is 'stolen' from just so this (local) node can get any
+	// data.
+	if localVec == nil {
+		localVec = client.Vec()
+		if localVec == nil {
+			return nil
+		}
+		cm := s.CentroidManagerFactoryFunc(localVec)
+		s.Table.AddSlot(args.NameSpace, &CManagerSlot{cManager: cm})
+	}
+
+	for r.TransferredN < args.TransferDPLimit && clientErr == nil {
+		// Can be improved. One at a time for convenience + readability.
+		centroids, cOK := client.NearestCentroids(localVec, 1, true)
+
+		if !cOK || len(centroids) == 0 {
+			break
+		}
+
+		s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
 			// @ unsafe, this is assuming cm has similar properties as centroids
 			// @ (such as KNNSearchfunc, etc).
 			cm.Centroids = append(cm.Centroids, centroids...)
 			r.TransferredN += centroids[0].LenDP()
-		}
+		})
+	}
+
+	s.Table.Access(args.NameSpace, func(cm *CentroidManager) {
+		cm.MoveVector()
 	})
+
+	r.OK = clientErr == nil
+	return nil
 }
 
 // MetaResp is metadata for a node. Contains two fiels, both are maps where keys

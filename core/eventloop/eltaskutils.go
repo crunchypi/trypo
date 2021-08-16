@@ -1,6 +1,8 @@
 package eventloop
 
-import "trypo/pkg/kmeans/rpc"
+import (
+	"trypo/pkg/kmeans/rpc"
+)
 
 // This is a helper for grouping addresses by the namespaces they use/have.
 // Useful because data is moved between multiple KMeansServer instances
@@ -57,7 +59,11 @@ func fetchRemoteLenDPs(addrs []Addr, namespace string) map[Addr]int {
 		go func(addr Addr) {
 			var err error
 			client := rpc.KMeansClient(addr.ToStr(), namespace, &err)
-			ch <- nodeDPLen{addr, client.LenDP(), err == nil}
+			lenDP := client.LenDP()
+			// NamespaceErr can be interpreted as dp len = 0.
+			_, castOK := err.(rpc.NamespaceErr)
+			ok := err == nil || (err != nil && !castOK)
+			ch <- nodeDPLen{addr, lenDP, ok}
 		}(addr)
 	}
 
