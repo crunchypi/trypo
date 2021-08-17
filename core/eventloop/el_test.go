@@ -277,6 +277,12 @@ func (l *tLogger) LogTask(s string) {
 	l.monitor.taskData[l.addr] = s
 }
 
+/*
+--------------------------------------------------------------------------------
+CFG stuff.
+--------------------------------------------------------------------------------
+*/
+
 func cfg(addr Addr, addrs []Addr, m *tMonitor) *EventLoopConfig {
 
 	rand.Seed(time.Now().UnixNano())
@@ -313,6 +319,12 @@ func cfg(addr Addr, addrs []Addr, m *tMonitor) *EventLoopConfig {
 		L:            &tLogger{addr: addr, monitor: m},
 	}
 }
+
+/*
+--------------------------------------------------------------------------------
+Test funcs... well, just running the monitor, actually.
+--------------------------------------------------------------------------------
+*/
 
 func TestMonitor(t *testing.T) {
 	g_network.Reset()
