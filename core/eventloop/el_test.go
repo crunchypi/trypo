@@ -64,17 +64,17 @@ var g_testSeconds = 60 * 9 // Test timeout panic at 10m.
 var g_dpDim = 30                         // dp dimension.
 var g_dpVecMin = 0.1                     // min vec value.
 var g_dpVecMax = 1.0                     // max vec value.
-var g_dpExpireSecMin = g_testSeconds / 2 // min dp expiration after creation.
+var g_dpExpireSecMin = g_testSeconds / 9 // min dp expiration after creation.
 var g_dpExpireSecMax = g_testSeconds     // max dp expiration after creation.
 
-// This is intended for monitoring accuracy of the system. Dps are put here
-// before the monitoring is started, then added to all nodes randomly (ish).
-// This way, it is certain that the network has these nodes, and this slice
-// can then be used to query nodes and measure accuracy. At the moment of
-// writing, the accuracy measurement is done in the 'pollAccuracy' method of
-// tMonitor.
-var g_dpN = 5000
-var g_dps = make([]common.DataPoint, 0, g_dpN)
+// g_bias=true will only add dps to g_addrs[0] (for the purpose of checking
+// how the load-balancing mechanism works). false will distribute new dps
+// among all g_addrs randomly.
+
+// g_bias=false will distribute new dps randomly among all addrs in g_addrs,
+// true will make it so that there is a bias so 50% of them are added to
+// g_addrs[0] (for the purpose of checking how load-balancing works).
+var g_bias = true
 
 /*
 --------------------------------------------------------------------------------
@@ -118,9 +118,9 @@ func dpsRand(n, dim int, vMin, vMax float64, expMin, expMax int) []common.DataPo
 func dpAddRand(addrs []Addr, namespace string, dp common.DataPoint) error {
 	rand.Seed(time.Now().UnixNano())
 
-	addr := addrs[0] // weight.
-	if rand.Intn(2) == 1 {
-		addr = addrs[rand.Intn(len(addrs))]
+	addr := addrs[rand.Intn(len(addrs))]
+	if g_bias && rand.Intn(2) == 1 {
+		addr = addrs[0]
 	}
 
 	var err error
@@ -156,7 +156,26 @@ type tMonitor struct {
 func (m *tMonitor) pollAccuracy() {
 	rand.Seed(time.Now().UnixNano())
 
-	queryVec := g_dps[rand.Intn(len(g_dps))].Vec
+	// Just get a random dp in the network.
+	randVec := dpRand(g_dpDim, g_dpVecMin, g_dpVecMax, 99, 99).Vec
+
+	dpRand := dps.GetDataPointsRand(dps.GetDataPointsArgs{
+		AddrOptions:   m.addrs,
+		Namespace:     g_namespace,
+		QueryVec:      randVec,
+		N:             1,
+		Drain:         false,
+		KNNSearchFunc: searchutils.KNNCos,
+	})
+	if len(dpRand) == 0 {
+		return
+	}
+
+	// The code below uses the vec from the random dp to measure
+	// accuracy (the query result should be as close to this vec
+	// as possible).
+
+	queryVec := dpRand[0].Vec
 
 	args := dps.GetDataPointsArgs{
 		AddrOptions:   m.addrs,
@@ -188,6 +207,7 @@ func (m *tMonitor) pollAccuracy() {
 	accurateScore, err := mathutils.CosineSimilarity(queryVec, dpsAccurate[0].Vec)
 	if err != nil {
 		//panic("nil score for fast accuracy")
+		return
 	}
 
 	m.accuracyTotalFast += fastScore
@@ -299,28 +319,11 @@ func TestMonitor(t *testing.T) {
 	defer g_network.Reset()
 
 	// abbreviations.
-	dpN := g_dpN
 	dim := g_dpDim
 	vMin := g_dpVecMin
 	vMax := g_dpVecMax
 	eMin := g_dpExpireSecMin
 	eMax := g_dpExpireSecMax
-
-	// Initial dps. These are cached so it's easier for the monitor
-	// to check accuracy with dps that definitely exist.
-	g_dps = dpsRand(dpN, dim, vMin, vMax, g_testSeconds, g_testSeconds)
-	for _, dp := range g_dps {
-		if err := dpAddRand(g_addrs, g_namespace, dp); err != nil {
-			t.Fatalf("failed to add init dps: %v", err)
-		}
-	}
-
-	// Add some extra to spice things up
-	for _, dp := range dpsRand(dpN, dim, vMin, vMax, eMin, eMax) {
-		if err := dpAddRand(g_addrs, g_namespace, dp); err != nil {
-			t.Fatalf("failed to add spicy dps: %v", err)
-		}
-	}
 
 	monitor := tMonitor{
 		addrs:     g_addrs,
@@ -336,7 +339,6 @@ func TestMonitor(t *testing.T) {
 	for i, addr := range g_addrs {
 		time.Sleep(time.Millisecond * time.Duration(rand.Intn(1000)+100))
 		stops[i] = EventLoop(cfg(addr, g_addrs, &monitor))
-
 	}
 
 	stopTime := time.Now().Add(time.Second * time.Duration(g_testSeconds))
