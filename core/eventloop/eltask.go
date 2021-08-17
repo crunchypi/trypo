@@ -190,6 +190,10 @@ func eltLoadBalancing(cfg *EventLoopConfig) {
 					// amount of dps transferred (since Centroids are sent whole).
 					transferDPN /= 3
 
+					if transferDPN == 0 {
+						continue
+					}
+
 					// No point in transferring if this would put 'other' below
 					// mean -- unless it's the only one that has anything for
 					// that namespace.
