@@ -31,11 +31,11 @@ var g_addrs = []Addr{
 	{"localhost", "3002"},
 	{"localhost", "3003"},
 	{"localhost", "3004"},
-	//{"localhost", "3005"},
-	//{"localhost", "3006"},
-	//{"localhost", "3007"},
-	//{"localhost", "3008"},
-	//{"localhost", "3009"},
+	{"localhost", "3005"},
+	{"localhost", "3006"},
+	{"localhost", "3007"},
+	{"localhost", "3008"},
+	{"localhost", "3009"},
 	//{"localhost", "3010"},
 	//{"localhost", "3011"},
 	//{"localhost", "3012"},
@@ -73,7 +73,7 @@ var g_dpExpireSecMax = g_testSeconds     // max dp expiration after creation.
 // can then be used to query nodes and measure accuracy. At the moment of
 // writing, the accuracy measurement is done in the 'pollAccuracy' method of
 // tMonitor.
-var g_dpN = 500
+var g_dpN = 5000
 var g_dps = make([]common.DataPoint, 0, g_dpN)
 
 /*
@@ -276,6 +276,7 @@ func cfg(addr Addr, addrs []Addr, m *tMonitor) *EventLoopConfig {
 			SplitCentroids:               rand.Intn(3) + 1,
 			MergeCentroids:               rand.Intn(3) + 1,
 			LoadBalancing:                rand.Intn(3) + 1,
+			Meta:                         1,
 		},
 
 		DistributeDataPointsFastN:     100,

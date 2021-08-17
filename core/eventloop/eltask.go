@@ -213,7 +213,7 @@ func eltLoadBalancing(cfg *EventLoopConfig) {
 }
 
 func eltMeta(cfg *EventLoopConfig) {
-	withSkip(cfg, 1, func() {
+	withSkip(cfg, cfg.TaskSkip.Meta, func() {
 		metaData := MetaData{Items: make(map[Addr]MetaDataItem)}
 		pullFrom := make([]Addr, 0, len(cfg.RemoteAddrs))
 

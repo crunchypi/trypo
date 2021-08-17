@@ -50,6 +50,9 @@ type EventLoopTaskSkipConfig struct {
 	MergeCentroids int
 	// LoadBalancing triggers load-balancing in the network.
 	LoadBalancing int
+	// Meta triggers polling of metadata for the logger ('L' field in
+	// EventLoopConfig, data is passed to the LogMeta method).
+	Meta int
 }
 
 // Clams vals in EventLoopTaskSkipConfig (particularly useful for
