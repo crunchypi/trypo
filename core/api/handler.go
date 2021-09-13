@@ -132,9 +132,6 @@ func (h *handler) queryDataPoint(w http.ResponseWriter, r *http.Request) {
 		resp = dps.GetDataPointsFast(args)
 	}
 
-	fmt.Println(args)
-	fmt.Println(resp)
-
 	// reply.
 	var respConv []DP
 	if resp != nil {
