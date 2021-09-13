@@ -1,3 +1,5 @@
+// +build monitor
+
 /*
 This file is more like a monitoring thing than unit tests.
 */
@@ -25,37 +27,10 @@ Some global vars.
 --------------------------------------------------------------------------------
 */
 
-var g_addrs = []Addr{
-	{"localhost", "3000"},
-	{"localhost", "3001"},
-	{"localhost", "3002"},
-	{"localhost", "3003"},
-	{"localhost", "3004"},
-	{"localhost", "3005"},
-	{"localhost", "3006"},
-	{"localhost", "3007"},
-	{"localhost", "3008"},
-	{"localhost", "3009"},
-	//{"localhost", "3010"},
-	//{"localhost", "3011"},
-	//{"localhost", "3012"},
-	//{"localhost", "3013"},
-	//{"localhost", "3014"},
-	//{"localhost", "3015"},
-	//{"localhost", "3016"},
-	//{"localhost", "3017"},
-	//{"localhost", "3018"},
-	//{"localhost", "3019"},
-	//{"localhost", "3020"},
-	//{"localhost", "3021"},
-	//{"localhost", "3022"},
-	//{"localhost", "3023"},
-	//{"localhost", "3024"},
-	//{"localhost", "3025"},
-}
+var g_addrs = make([]Addr, 0, 5)
 
 var g_namespace = "test"
-var g_network = testutils.NewTNetwork(g_addrs)
+var g_network testutils.TNetwork
 
 // How long the monitoring will last.
 var g_testSeconds = 60 * 9 // Test timeout panic at 10m.
@@ -74,7 +49,15 @@ var g_dpExpireSecMax = g_testSeconds     // max dp expiration after creation.
 // g_bias=false will distribute new dps randomly among all addrs in g_addrs,
 // true will make it so that there is a bias so 50% of them are added to
 // g_addrs[0] (for the purpose of checking how load-balancing works).
-var g_bias = true
+var g_bias = false
+
+func init() {
+	for i := 0; i < cap(g_addrs); i++ {
+		g_addrs = append(g_addrs, Addr{"localhost", fmt.Sprint(3000 + i)})
+	}
+
+	g_network = testutils.NewTNetwork(g_addrs)
+}
 
 /*
 --------------------------------------------------------------------------------
