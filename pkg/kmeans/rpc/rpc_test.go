@@ -194,7 +194,7 @@ func (tn *tNetwork) unwrap(addr, namespace string) *CentroidManager {
 }
 
 // One address per node in a tNetwork instance (next var).
-var addrs = []addr{"localhost:3000", "localhost:3001", "localhost:3002"}
+var addrs = []addr{"localhost:3001", "localhost:3002", "localhost:3003"}
 
 // A test network for all tests, this should be cleaned in each test,
 // so use 'defer network.reset()' or something like that. It is
@@ -210,6 +210,32 @@ func init() {
 Section for actual tests.
 --------------------------------------------------------------------------------
 */
+
+func TestNamespaces(t *testing.T) {
+	defer network.reset()
+	namespace := "test"
+	addr := addrs[0]
+
+	vec1 := vec(3, 4)
+	slot := CManagerSlot{cManager: newCentroidManager(vec1)}
+	network.nodes[addr].Table.slots[namespace] = &slot
+
+	var err error
+	ns := KMeansClient(addr, namespace, &err).Namespaces()
+
+	if err != nil {
+		t.Fatalf("client err: %v", err)
+	}
+
+	if len(ns) != 1 {
+		t.Errorf("unexpected namespace count: %v", len(ns))
+	}
+
+	if ns[0] != namespace {
+		t.Errorf("unexpected namespace: %v", ns[0])
+	}
+
+}
 
 func TestVec(t *testing.T) {
 	// Boilerplate.
@@ -473,7 +499,7 @@ func TestMoveVector(t *testing.T) {
 	}
 }
 
-func TestDistributeDataPoints(t *testing.T) {
+func TestDistributeDataPointsFast(t *testing.T) {
 	// Boilerplate.
 	defer network.reset()
 	namespace := "test"
@@ -508,13 +534,10 @@ func TestDistributeDataPoints(t *testing.T) {
 	cm2.AddDataPoint(dp(vec(1, 3), 0)) // dp8: closest to c1.
 
 	// Validation.
-	rcv := []common.DataPointReceiver{
-		KMeansClient(addr1, namespace, nil),
-		KMeansClient(addr2, namespace, nil),
-	}
-	for i, addr := range []string{addr1, addr2} { // Move dps between nodes.
+	addrs := []string{addr1, addr2}
+	for i, addr := range addrs { // Move dps between nodes.
 		var err error
-		KMeansClient(addr, namespace, &err).DistributeDataPoints(1, rcv)
+		KMeansClient(addr, namespace, &err).DistributeDataPointsFast(addrs, 1)
 
 		if err != nil {
 			t.Fatalf("client %v err: %v", i, err)
@@ -537,6 +560,65 @@ func TestDistributeDataPoints(t *testing.T) {
 	// Confirm that dp8 is no longer in c2 (moved to c1).
 	if vecIn(vec(1, 3), dps2Vecs(c2dps)) {
 		t.Fatalf("c2dps still contains vec with bad fit.")
+	}
+}
+
+func TestDistributeDataPointsAccurate(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+
+	// Test description:
+	// The only datapoint (dp1) fits snugly within its _CentroidManager_
+	// instance (cm1) but doesn't fit at all within its _Centroid_ instance
+	// (c1). DistributeDataPointsFast (the other variant) hast _CentroidManager_
+	// accuracy, so the problem won't be solved. The method tested here
+	// (DistributeDataPointsAccurate) has _Centroid_ accuracy (i.e grater
+	// granularity) and should solve this problem (move dp1->c2).
+	// A note; there is only one dp and it should be moved one way. Using
+	// two dps (one in c1 and one in c2) for a symmetric two-way move is
+	// not checked because the setup is a bit tricky, as moving dps will
+	// change the vectors of centroids and centroidmanagers...
+
+	// More convoluted and accurate description:
+	// dp1 is in c1 (centroid 1) and cm1 (centroidmanager 1). Its vec
+	// is exactly the same as cm1, so using DistributeDataPointsFast
+	// should not change anything. The problem is, however, that it is
+	// not similar at all to c1, but is has the exact vec as c2, contained
+	// in cm2...
+
+	// Setup node 1.
+	c1 := newCentroid(vec(1, 1))
+	c1.DataPoints = []DataPoint{
+		dp(vec(1, 9), 0), // dp1 (misfit in c1).
+	}
+	cm1 := newCentroidManager(vec(1, 9)) // closet to dp1.
+	cm1.Centroids = []*Centroid{c1}
+	addr1 := addrs[0]
+	network.nodes[addr1].Table.AddSlot(namespace, &CManagerSlot{cManager: cm1})
+
+	// Setup node 2.
+	c2 := newCentroid(vec(1, 9))
+	cm2 := newCentroidManager(vec(1, 1))
+	cm2.Centroids = []*Centroid{c2}
+	addr2 := addrs[1]
+	network.nodes[addr2].Table.AddSlot(namespace, &CManagerSlot{cManager: cm2})
+
+	// Validation.
+	var err error
+	client := KMeansClient(addr1, namespace, &err)          // send from misfit.
+	client.DistributeDataPointsAccurate([]string{addr2}, 1) // send to fit.
+
+	if err != nil {
+		t.Fatalf("net err for %v: %v", addrs[0], err)
+	}
+
+	// Again, dp1 fits in cm1 but not in c1, so should have been moved to c2.
+	if len(c1.DataPoints) != 0 {
+		t.Fatalf("incorrect dp amount in c1: %v\n", len(c1.DataPoints))
+	}
+	if len(c2.DataPoints) != 1 {
+		t.Fatalf("incorrect dp amount in c2: %v\n", len(c2.DataPoints))
 	}
 }
 
@@ -807,6 +889,53 @@ func TestMergeCentroids(t *testing.T) {
 	// 3) cm.Centroids= [c2, c3].
 	if cm.Centroids[1].LenDP() != 3 {
 		t.Fatalf("c3 didn't get merged into c1")
+	}
+}
+
+func TestStealCentroids(t *testing.T) {
+	// Boilerplate.
+	defer network.reset()
+	namespace := "test"
+
+	c1 := newCentroid(vec(1, 1))
+	c1.DataPoints = []DataPoint{
+		dp(vec(1, 1), 0),
+		dp(vec(1, 1), 0),
+	}
+
+	c2 := newCentroid(vec(1, 3))
+	c2.DataPoints = []DataPoint{
+		dp(vec(1, 1), 0),
+		dp(vec(1, 1), 0),
+	}
+
+	cm1 := newCentroidManager(vec(1, 1)) // Stolen from.
+	cm1.Centroids = []*Centroid{c1, c2}
+	network.nodes[addrs[1]].Table.AddSlot(namespace, &CManagerSlot{cManager: cm1})
+
+	// Vec here is closest to c2.
+	cm2 := newCentroidManager(vec(1, 3)) // Stealer.
+	network.nodes[addrs[0]].Table.AddSlot(namespace, &CManagerSlot{cManager: cm2})
+
+	// Validate.
+	var err error
+	client := KMeansClient(addrs[0], namespace, &err)
+	n, ok := client.StealCentroids(addrs[1], 2)
+
+	if err != nil {
+		t.Fatalf("net err for %v: %v", addrs[0], err)
+	}
+	if !ok {
+		t.Fatal("got false from call StealCentroids call")
+	}
+	if n != 2 {
+		t.Fatalf("unexpected total dp transfer. want %v, got %v", 2, n)
+	}
+	if len(cm1.Centroids) != 1 {
+		t.Fatalf("unexpected centroid amt in c1: want %v, have %v", 1, len(cm1.Centroids))
+	}
+	if len(cm2.Centroids) != 1 {
+		t.Fatalf("unexpected centroid amt in c1: want %v, have %v", 1, len(cm2.Centroids))
 	}
 }
 

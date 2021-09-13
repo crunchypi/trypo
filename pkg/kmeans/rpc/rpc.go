@@ -123,6 +123,27 @@ type CManagerTable struct {
 	sync.Mutex
 }
 
+// Reset flushes the internal data.
+func (t *CManagerTable) Reset() {
+	t.Lock()
+	defer t.Unlock()
+
+	t.slots = make(map[string]*CManagerSlot)
+}
+
+// Namespaces returns all namespaces in the table.
+func (t *CManagerTable) Namespaces() []string {
+	t.Lock()
+	defer t.Unlock()
+
+	namespaces := make([]string, 0, len(t.slots))
+	for namespace := range t.slots {
+		namespaces = append(namespaces, namespace)
+	}
+
+	return namespaces
+}
+
 // Access does a concurrency safe access of the internal namespaced data in
 // CManagerTable, which can be done with one Goroutine per namespace.
 // Example:
@@ -160,6 +181,9 @@ func (t *CManagerTable) AddSlot(namespace string, cms *CManagerSlot) bool {
 	return true
 }
 
+// CentroidManagerFactoryF is whatever creates a CentroidManager.
+type CentroidManagerFactoryF = func(vec []float64) *CentroidManager
+
 // KMeansServer is contains endpoint counterparts for kmeansClient (accessed
 // with KMeansClient(...)).
 type KMeansServer struct {
@@ -169,7 +193,19 @@ type KMeansServer struct {
 	Table *CManagerTable
 	// The server has functionality for creating new namespaced CentroidManager
 	// and will need a way of doing that.
-	CentroidManagerFactoryFunc func(vec []float64) *CentroidManager
+	CentroidManagerFactoryFunc CentroidManagerFactoryF
+}
+
+// NewKMeansServer sets up (but doesn't start) a new KMeansServer.
+func NewKMeansServer(addr string, f CentroidManagerFactoryF) *KMeansServer {
+	slots := make(map[string]*CManagerSlot)
+	table := CManagerTable{slots: slots}
+
+	return &KMeansServer{
+		addr:                       addr,
+		Table:                      &table,
+		CentroidManagerFactoryFunc: f,
+	}
 }
 
 // StartListen is a convenience func for starting one or more instances of

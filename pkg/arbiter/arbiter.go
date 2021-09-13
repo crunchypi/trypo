@@ -16,19 +16,30 @@ type StatusCode = common.StatusCode
 
 // Abbreviation for func that sets up clients (orchestration of arbiterClient)
 var ArbiterClients = rpc.ArbiterClients
+var ArbiterClient = rpc.ArbiterClient
+
+// NewSessionMemberConfig is a slightly simplified version of
+// sessionmember.NewSessionMemberConfig, where the 'F' field
+// is omitted (has a default in NewSessionMemer func in this pkg).
+type NewSessionMemberConfig struct {
+	LocalAddr       Addr
+	Whitelist       []Addr
+	SessionDuration time.Duration
+	ArbiterDuration time.Duration
+}
 
 // NewSessionMember creates an arbitration sessionmember.
-func NewSessionMember(localAddr Addr, allAddrs []Addr) *SessionMember {
+func NewSessionMember(cfg NewSessionMemberConfig) *SessionMember {
 	f := sessionmember.Funcs{RemoteVoteFunc: rpc.RemoteVoteFunc()}
-	cfg := sessionmember.NewSessionMemberConfig{
-		LocalAddr:       localAddr,
-		Whitelist:       allAddrs,
+	cfg2 := sessionmember.NewSessionMemberConfig{
+		LocalAddr:       cfg.LocalAddr,
+		Whitelist:       cfg.Whitelist,
 		F:               f,
-		SessionDuration: time.Second * 5,
-		ArbiterDuration: time.Minute * 5,
+		SessionDuration: cfg.SessionDuration,
+		ArbiterDuration: cfg.ArbiterDuration,
 	}
 
-	return sessionmember.NewSessionMember(cfg)
+	return sessionmember.NewSessionMember(cfg2)
 }
 
 // Convenient 'errors' arg for ArbiterClients func.
@@ -60,6 +71,6 @@ func (s *ArbStats) UniformStatus(sc StatusCode) bool {
 }
 
 // NewArbiterServer creates an ArbiterServer (RPC layer on top of SessionMember).
-func NewArbiterServer(localAddr Addr, allAddrs []Addr) *ArbiterServer {
-	return rpc.NewArbiterServer(NewSessionMember(localAddr, allAddrs))
+func NewArbiterServer(cfg NewSessionMemberConfig) *ArbiterServer {
+	return rpc.NewArbiterServer(NewSessionMember(cfg))
 }
