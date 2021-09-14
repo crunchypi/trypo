@@ -9,14 +9,18 @@ import (
 	"time"
 	"trypo/core/eventloop"
 	"trypo/pkg/arbiter"
+	"trypo/pkg/searchutils"
 )
 
 // Alias.
 type Addr = arbiter.Addr
 
-// This is used further down, just keeping it here at the top for easy
-// access (cfg files are long and spooky).
-
+/*
+--------------------------------------------------------------------------------
+	This is used further down, just keeping it here at the top for easy
+	access (cfg files are long and spooky).
+--------------------------------------------------------------------------------
+*/
 // Local address for RPC network (so distributed ops).
 var localAddrRPC = Addr{"localhost", "3500"}
 
@@ -28,13 +32,34 @@ var otherAddrRPC = []Addr{
 // Address for the API / web server used as a user-facing interface.
 var localAddrAPI = Addr{"localhost", "3501"}
 
-// NOTE: Copied all var/field documentation from core/eventloop/cfg.go,
-// keep that in mind when reading comments, because some of them will
-// do something odd like saying '.. can find it in this pkg'.
-//
-// This is basically what goes into the RPC network eventloop for
-// this node.
-var ELTCFG = eventloop.EventLoopConfig{
+/*
+--------------------------------------------------------------------------------
+	These are search funcs for "k nearest neighbours", basically the
+	entire point of the system (approximate nearest neighbours).
+--------------------------------------------------------------------------------
+*/
+
+// Anyway, this is for cosine similarity and should _NOT_ be changed
+// (to the XXXEuc variant) at the moment of writing because cosine
+// simi is hardcoded in a couple places, and using XXXEuc here
+// will mix alot of things together weirdly........................
+var KNN_SEARCH_FUNC = searchutils.KNNCos
+
+// See comment for KNN_SEARCH_FUNC in this pkg.
+var KFN_SEARCH_FUNC = searchutils.KFNCos
+
+/*
+--------------------------------------------------------------------------------
+	NOTE: Copied all var/field documentation from core/eventloop/cfg.go,
+	keep that in mind when reading comments, because some of them will
+	do something odd like saying '.. can find it in this pkg'.
+
+	This is basically what goes into the RPC network eventloop for
+	this node.
+--------------------------------------------------------------------------------
+*/
+// Config for core/eventloop/cfg.go
+var ELT = eventloop.EventLoopConfig{
 	LocalAddr: localAddrRPC,
 	// All addresses in the network, should include LocalAddr.
 	RemoteAddrs: otherAddrRPC,
@@ -147,3 +172,16 @@ var ELTCFG = eventloop.EventLoopConfig{
 	// logger is only compatible with unix-based systems.
 	L: nil,
 }
+
+/*
+--------------------------------------------------------------------------------
+	Some cfg for creation of CentroidManager (pkg/kmeans/centroidmanager)
+	instances, these will be used in the rpc server (pkg/kmeans/roc).
+--------------------------------------------------------------------------------
+*/
+
+// This specifies the capacity of the centroid slice in each kmeansmanager instance.
+var KMEANS_INITCAP = 100
+
+// This specifies how many datapoints a centroid can have before it is split in half.
+var KMEANS_CENTROID_DP_THRESHOLD = 10000
