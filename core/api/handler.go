@@ -10,7 +10,13 @@ import (
 	"trypo/pkg/searchutils"
 )
 
-type handler struct{}
+type handler struct {
+	// RPCAddrs should contain all addresses used in RPC network which contains
+	// all the nodes which handle the data used in this system and service (i.e
+	// approximate nearest neighs search). Should contain addr for the local rpc
+	// instance, not to be confused with the Addr (port) used for the API.
+	RPCAddrs []Addr
+}
 
 func (h *handler) setRoutes() {
 	routes := map[string]func(http.ResponseWriter, *http.Request){
@@ -43,10 +49,9 @@ func (h *handler) tryUnpackRequestOptions(
 // Pass request to dps.PutDataPointX (core/dps/putdps.go).
 func (h *handler) putDataPoint(w http.ResponseWriter, r *http.Request) {
 	opts := struct {
-		AddrOptions []string `json:"addressOptions"`
-		Namespace   string   `json:"namespace"`
-		Accurate    bool     `json:"accurate"`
-		DP          DP       `json:"dp"`
+		Namespace string `json:"namespace"`
+		Accurate  bool   `json:"accurate"`
+		DP        DP     `json:"dp"`
 	}{}
 
 	// opts unpack.
@@ -54,16 +59,9 @@ func (h *handler) putDataPoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// addr conv.
-	addrOpts, convOk := strsToAddrs(opts.AddrOptions)
-	if !convOk {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
 	// pass to dps pkg.
 	args := dps.PutDataPointArgs{
-		AddrOptions:   addrOpts,
+		AddrOptions:   h.RPCAddrs,
 		Namespace:     opts.Namespace,
 		DataPoint:     opts.DP.toDataPoint(),
 		KNNSearchFunc: searchutils.KNNCos,
@@ -94,12 +92,11 @@ func (h *handler) putDataPoint(w http.ResponseWriter, r *http.Request) {
 // Pass request to dps.GetDataPointX (core/dps/getdps.go).
 func (h *handler) queryDataPoint(w http.ResponseWriter, r *http.Request) {
 	opts := struct {
-		AddrOptions []string  `json:"addressOptions"`
-		Namespace   string    `json:"namespace"`
-		Accurate    bool      `json:"accurate"`
-		QueryVec    []float64 `json:"queryVec"`
-		N           int       `json:"n"`
-		Drain       bool      `json:"drain"`
+		Namespace string    `json:"namespace"`
+		Accurate  bool      `json:"accurate"`
+		QueryVec  []float64 `json:"queryVec"`
+		N         int       `json:"n"`
+		Drain     bool      `json:"drain"`
 	}{}
 
 	// opts unpack.
@@ -107,16 +104,9 @@ func (h *handler) queryDataPoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// addr conv.
-	addrOpts, convOk := strsToAddrs(opts.AddrOptions)
-	if !convOk {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
 	// pass to dps pkg.
 	args := dps.GetDataPointsArgs{
-		AddrOptions:   addrOpts,
+		AddrOptions:   h.RPCAddrs,
 		Namespace:     opts.Namespace,
 		QueryVec:      opts.QueryVec,
 		N:             opts.N,

@@ -15,14 +15,14 @@ import (
 var apiAddr = Addr{"localhost", "3000"}
 
 // RPC addresses.
-var addrs = []Addr{
+var rpcAddrs = []Addr{
 	{"localhost", "3001"},
 	{"localhost", "3002"},
 	{"localhost", "3003"},
 }
 
 var namespace = "test"
-var network testutils.TNetwork = testutils.NewTNetwork(addrs)
+var network testutils.TNetwork = testutils.NewTNetwork(rpcAddrs)
 
 // post handles marshalling and posting.
 func postData(url string, data interface{}) (*http.Response, error) {
@@ -45,6 +45,7 @@ func TestDataPoint(t *testing.T) {
 			Addr:         apiAddr,
 			ReadTimeout:  time.Second * 5,
 			WriteTimeout: time.Second * 5,
+			RPCAddrs:     rpcAddrs,
 		})
 		t.Log(err)
 	}()
@@ -57,15 +58,13 @@ func TestDataPoint(t *testing.T) {
 
 	// Put.
 	putArgs := struct {
-		AddrOptions []string `json:"addressOptions"`
-		Namespace   string   `json:"namespace"`
-		Accurate    bool     `json:"accurate"`
-		DP          DP       `json:"dp"`
+		Namespace string `json:"namespace"`
+		Accurate  bool   `json:"accurate"`
+		DP        DP     `json:"dp"`
 	}{
-		AddrOptions: addrsToStrs(addrs),
-		Namespace:   namespace,
-		Accurate:    true,
-		DP:          dp,
+		Namespace: namespace,
+		Accurate:  true,
+		DP:        dp,
 	}
 
 	if _, err := postData("http://"+apiAddr.ToStr()+"/api/dp/put", putArgs); err != nil {
@@ -74,19 +73,17 @@ func TestDataPoint(t *testing.T) {
 
 	// Query.
 	queryArgs := struct {
-		AddrOptions []string  `json:"addressOptions"`
-		Namespace   string    `json:"namespace"`
-		Accurate    bool      `json:"accurate"`
-		QueryVec    []float64 `json:"queryVec"`
-		N           int       `json:"n"`
-		Drain       bool      `json:"drain"`
+		Namespace string    `json:"namespace"`
+		Accurate  bool      `json:"accurate"`
+		QueryVec  []float64 `json:"queryVec"`
+		N         int       `json:"n"`
+		Drain     bool      `json:"drain"`
 	}{
-		AddrOptions: addrsToStrs(addrs),
-		Namespace:   namespace,
-		Accurate:    true,
-		QueryVec:    dp.Vec,
-		N:           3,
-		Drain:       false,
+		Namespace: namespace,
+		Accurate:  true,
+		QueryVec:  dp.Vec,
+		N:         3,
+		Drain:     false,
 	}
 
 	r, err := postData("http://"+apiAddr.ToStr()+"/api/dp/query", queryArgs)
