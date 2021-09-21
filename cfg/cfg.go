@@ -22,15 +22,15 @@ type Addr = arbiter.Addr
 --------------------------------------------------------------------------------
 */
 // Local address for RPC network (so distributed ops).
-var localAddrRPC = Addr{"localhost", "3500"}
+var LocalAddrRPC = Addr{"localhost", "3500"}
 
 // All other addresses in the RPC network. Include local.
-var otherAddrRPC = []Addr{
-	localAddrRPC,
+var OtherAddrRPC = []Addr{
+	LocalAddrRPC,
 }
 
 // Address for the API / web server used as a user-facing interface.
-var localAddrAPI = Addr{"localhost", "3501"}
+var LocalAddrAPI = Addr{"localhost", "3501"}
 
 /*
 --------------------------------------------------------------------------------
@@ -60,9 +60,9 @@ var KFN_SEARCH_FUNC = searchutils.KFNCos
 */
 // Config for core/eventloop/cfg.go
 var ELT = eventloop.EventLoopConfig{
-	LocalAddr: localAddrRPC,
+	LocalAddr: LocalAddrRPC,
 	// All addresses in the network, should include LocalAddr.
-	RemoteAddrs: otherAddrRPC,
+	RemoteAddrs: OtherAddrRPC,
 
 	// Timeout for each loop interation.
 	TimeoutLoop: time.Second * 5,
